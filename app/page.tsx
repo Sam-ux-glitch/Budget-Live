@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { currentMonth, monthBounds, summarizeBudget, fetchAllPages, type BudgetCategory, type BudgetTransaction } from "./lib/budget";
 import { createClient } from "@supabase/supabase-js";
 import { usePlaidLink } from "react-plaid-link";
 
@@ -9,14 +10,7 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
 );
 
-type BudgetCategory = {
-  id: string;
-  name: string;
-  monthly_limit: number;
-  category_type: string;
-};
-
-type Transaction = {
+type Transaction = BudgetTransaction & {
   id: string;
   transaction_date: string;
   merchant_name: string | null;
@@ -40,7 +34,19 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const loggedIn = userId !== null;
+  const [month, setMonth] = useState(currentMonth);
+  const [monthlyTransactions, setMonthlyTransactions] = useState<BudgetTransaction[]>([]);
+  const [bankConnections, setBankConnections] = useState<{ id: string }[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState("");
+  const [loadedScope, setLoadedScope] = useState("");
+  const requestVersion = useRef(0);
+  const currentUser = useRef<string | null>(null);
+  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
+  const [syncing, setSyncing] = useState(false);
+  const syncInProgress = useRef(false);
   const [categories, setCategories] = useState<BudgetCategory[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
@@ -48,87 +54,84 @@ export default function Home() {
   const [section, setSection] = useState<Section>("dashboard");
 
   useEffect(() => {
-    checkSession();
-  }, []);
-
-  async function checkSession() {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    if (session) {
-      setLoggedIn(true);
-      await loadData();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      const nextUser = session?.user.id ?? null;
+      if (currentUser.current !== nextUser) {
+        currentUser.current = nextUser;
+        invalidateRequests();
+        setUserId(nextUser);
+        setLoadedScope("");
+        setLinkToken(null);
+        setMessage("");
+        setCategories([]);
+        setMonthlyTransactions([]);
+        setTransactions([]);
+        setBankConnections([]);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [invalidateRequests]);
+  const loadData = useCallback(async () => {
+    if (!userId || currentUser.current !== userId) return false;
+    const version = ++requestVersion.current;
+    setDataLoading(true);
+    setDataError("");
+    try {
+      const { start, end } = monthBounds(month);
+      const [categoryData, monthlyData, recent, connections] = await Promise.all([
+        fetchAllPages<BudgetCategory>((from, to) => supabase.from("budget_categories")
+          .select("id, name, monthly_limit, category_type").eq("user_id", userId)
+          .eq("is_active", true).order("sort_order").order("id").range(from, to)),
+        fetchAllPages<BudgetTransaction>((from, to) => supabase.from("transactions")
+          .select("id, category_id, transaction_date, amount, excluded_from_budget, is_transfer, plaid_removed_at")
+          .eq("user_id", userId).gte("transaction_date", start).lt("transaction_date", end)
+          .order("id").range(from, to)),
+        supabase.from("transactions")
+          .select("id, category_id, transaction_date, merchant_name, description, amount, account_name, categorization_source, excluded_from_budget, is_transfer, plaid_removed_at, budget_categories(name)")
+          .eq("user_id", userId).is("plaid_removed_at", null)
+          .order("transaction_date", { ascending: false }).order("id").limit(100),
+        supabase.from("bank_connections").select("id").eq("user_id", userId).eq("status", "active"),
+      ]);
+      if (recent.error) throw recent.error;
+      if (connections.error) throw connections.error;
+      // Validate before publishing the complete snapshot.
+      summarizeBudget(categoryData, monthlyData, month);
+      if (version !== requestVersion.current) return false;
+      setCategories(categoryData);
+      setMonthlyTransactions(monthlyData);
+      setTransactions((recent.data ?? []) as Transaction[]);
+      setBankConnections(connections.data ?? []);
+      setLoadedScope(userId + ":" + month);
+      return true;
+    } catch {
+      if (version === requestVersion.current) setDataError("Could not load your budget. Refresh to try again; no partial totals are shown.");
+      return false;
+    } finally {
+      if (version === requestVersion.current) setDataLoading(false);
     }
-  }
-
+  }, [userId, month]);
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(() => { if (active) void loadData(); });
+    return () => { active = false; invalidateRequests(); };
+  }, [loadData, invalidateRequests]);
   async function signIn() {
     setMessage("");
     setLoading(true);
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setLoggedIn(true);
-    await loadData();
-  }
-
-  async function loadData() {
-    setMessage("");
-
-    const { data: categoryData, error: categoryError } = await supabase
-      .from("budget_categories")
-      .select("id, name, monthly_limit, category_type")
-      .eq("is_active", true)
-      .order("sort_order");
-
-    if (categoryError) {
-      setMessage(categoryError.message);
-      return;
-    }
-
-    setCategories(categoryData ?? []);
-
-    const { data: transactionData, error: transactionError } = await supabase
-      .from("transactions")
-      .select(`
-        id,
-        transaction_date,
-        merchant_name,
-        description,
-        amount,
-        account_name,
-        categorization_source,
-        budget_categories (
-          name
-        )
-      `)
-      .order("transaction_date", { ascending: false })
-      .limit(100);
-
-    if (transactionError) {
-      setMessage(transactionError.message);
-      return;
-    }
-console.log("TRANSACTION DATA:", transactionData);
-    setTransactions((transactionData ?? []) as Transaction[]);
+    if (error) setMessage(error.message);
+    else setPassword("");
   }
 async function createPlaidLinkToken() {
+  if (!userId || currentUser.current !== userId) return;
   setMessage("");
 
   const { data, error } = await supabase.functions.invoke(
     "plaid-create-link-token"
   );
 
+  if (currentUser.current !== userId) return;
   if (error) {
     setMessage(`Plaid error: ${error.message}`);
     return;
@@ -142,9 +145,15 @@ async function createPlaidLinkToken() {
   setLinkToken(data.link_token);
 }
   async function signOut() {
-    await supabase.auth.signOut();
-
-    setLoggedIn(false);
+    const { error } = await supabase.auth.signOut();
+    if (error) { setMessage("Could not sign out. Please try again."); return; }
+    invalidateRequests();
+    currentUser.current = null;
+    setUserId(null);
+    setMonthlyTransactions([]);
+    setBankConnections([]);
+    setLoadedScope("");
+    setLinkToken(null);
     setCategories([]);
     setTransactions([]);
     setEmail("");
@@ -157,22 +166,24 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
   token: linkToken,
 
   onSuccess: async (public_token) => {
+    if (!userId || currentUser.current !== userId) return;
     setMessage("Connecting bank...");
 
-    const { data, error } = await supabase.functions.invoke(
+    const { error } = await supabase.functions.invoke(
       "plaid-exchange-token",
       {
         body: { public_token },
       }
     );
 
+    if (currentUser.current !== userId) return;
     if (error) {
       setMessage(`Bank connection error: ${error.message}`);
       return;
     }
 
-    console.log("Plaid token exchange successful", data);
-    setMessage("Bank connected successfully.");
+    await loadData();
+    if (currentUser.current === userId) setMessage("Bank connected successfully.");
   },
 
   onExit: (error) => {
@@ -183,11 +194,10 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
     }
   },
 });
-  const totalBudget = categories.reduce(
-    (total, category) => total + Number(category.monthly_limit),
-    0
-  );
-
+  const summary = summarizeBudget(categories, monthlyTransactions, month);
+  const totalBudget = summary.budget;
+  const dataReady = loadedScope === userId + ":" + month && !dataLoading && !dataError;
+  const money = (amount: number) => amount.toLocaleString(undefined, { style: "currency", currency: "USD" });
   function Navigation() {
     const items: { id: Section; label: string }[] = [
       { id: "dashboard", label: "Dashboard" },
@@ -281,7 +291,7 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
       <>
         <div className="grid md:grid-cols-3 gap-4 mb-8">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-            <p className="text-zinc-400 text-sm">Monthly Budget</p>
+            <p className="text-zinc-400 text-sm">Budget for Selected Month</p>
 
             <p className="text-3xl font-bold mt-2">
               $
@@ -297,10 +307,10 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
           </div>
 
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-            <p className="text-zinc-400 text-sm">Spent This Month</p>
-            <p className="text-3xl font-bold mt-2">$0.00</p>
+            <p className="text-zinc-400 text-sm">Categorized Spending</p>
+            <p className="text-3xl font-bold mt-2">{money(summary.spent)}</p>
             <p className="text-zinc-500 text-sm mt-2">
-              Updates from transactions
+              For the selected month
             </p>
           </div>
 
@@ -309,14 +319,14 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
 
             <p className="text-3xl font-bold mt-2">
               $
-              {totalBudget.toLocaleString(undefined, {
+              {summary.remaining.toLocaleString(undefined, {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
               })}
             </p>
 
             <p className="text-zinc-500 text-sm mt-2">
-              Available this month
+              After categorized spending
             </p>
           </div>
         </div>
@@ -326,7 +336,7 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
             <h2 className="text-2xl font-bold">Budget Categories</h2>
 
             <p className="text-zinc-400 mt-1">
-              Your monthly spending limits
+              Current category limits for the selected month
             </p>
           </div>
 
@@ -375,104 +385,75 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
           <h2 className="text-3xl font-bold">Transactions</h2>
 
           <p className="text-zinc-400 mt-2">
-            View and manage your imported transactions.
+            Your 100 most recent imported transactions. Budget totals use the full selected month.
           </p>
         </div>
 
-        <TransactionList />
+        {TransactionList()}
       </>
     );
   }
 
   function BudgetPage() {
-    return (
-      <>
-        <div className="mb-7">
-          <h2 className="text-3xl font-bold">Budget</h2>
-
-          <p className="text-zinc-400 mt-2">
-            Your monthly budget categories.
-          </p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          {categories.map((category) => (
-            <div
-              key={category.id}
-              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <p className="font-semibold text-lg">{category.name}</p>
-
-                  <p className="text-zinc-500 text-sm capitalize">
-                    {category.category_type}
-                  </p>
-                </div>
-
-                <p className="text-xl font-bold">
-                  $
-                  {Number(category.monthly_limit).toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </>
-    );
+    return <>
+      <h2 className="text-3xl font-bold mb-2">Budget</h2>
+      <p className="text-zinc-400 mb-6">Categorized spending includes pending purchases and subtracts refunds and credits. Transfers, excluded transactions, and removed transactions do not count. Past months use your current category limits.</p>
+      <div className="grid gap-4 md:grid-cols-3 mb-6">
+        <div className="rounded-2xl bg-zinc-900 p-5">Budgeted<p className="text-2xl font-bold">{money(summary.budget)}</p></div>
+        <div className="rounded-2xl bg-zinc-900 p-5">Spent<p className="text-2xl font-bold">{money(summary.spent)}</p></div>
+        <div className="rounded-2xl bg-zinc-900 p-5">Remaining<p className="text-2xl font-bold">{money(summary.remaining)}</p></div>
+      </div>
+      {summary.rows.length === 0 && <p>No active budget categories yet.</p>}
+      <div className="grid gap-4 md:grid-cols-2">
+        {summary.rows.map(category => <div key={category.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
+          <h3 className="font-semibold text-lg">{category.name}</h3>
+          <p className="text-zinc-400 text-sm capitalize">{category.category_type}</p>
+          <dl className="grid grid-cols-3 gap-3 mt-4">
+            <div><dt className="text-zinc-400 text-sm">Budgeted</dt><dd>{money(category.limit)}</dd></div>
+            <div><dt className="text-zinc-400 text-sm">Spent</dt><dd>{money(category.spent)}</dd></div>
+            <div><dt className="text-zinc-400 text-sm">Remaining</dt><dd className={category.remaining < 0 ? "text-red-400" : "text-green-400"}>{money(category.remaining)}</dd></div>
+          </dl>
+          {category.remaining < 0 && <p className="text-red-400 text-sm mt-3">Over budget by {money(-category.remaining)}</p>}
+        </div>)}
+      </div>
+    </>;
   }
-function AccountsPage() {
-  const [bankConnections, setBankConnections] = useState<any[]>([]);
-  useEffect(() => {
-  async function loadBankConnections() {
-    const { data, error } = await supabase
-      .from("bank_connections")
-      .select("*")
-      .eq("status", "active");
-
-    if (!error) {
-      setBankConnections(data ?? []);
-    }
-  }
-
-  loadBankConnections();
-}, []);
 async function syncTransactions() {
+  if (syncInProgress.current || !userId) return;
+  const sameUser = () => currentUser.current === userId;
+  syncInProgress.current = true;
+  setSyncing(true);
   setMessage("Syncing transactions...");
-
-  const { data: syncData, error: syncError } =
-    await supabase.functions.invoke("plaid-sync-transactions", {
-      body: {},
-    });
-
-  if (syncError) {
-    setMessage(`Sync error: ${syncError.message}`);
-    return;
+  try {
+    const { data: syncData, error: syncError } = await supabase.functions.invoke("plaid-sync-transactions", { body: {} });
+    if (!sameUser()) return;
+    if (syncError || syncData?.success === false || syncData?.error) {
+      await loadData();
+      if (!sameUser()) return;
+      setMessage("Some accounts could not sync. Please retry. Successfully imported transactions have been refreshed.");
+      return;
+    }
+    setMessage("Transactions synced. AI categorizing...");
+    const { data: aiData, error: aiError } = await supabase.functions.invoke("ai-categorize-transactions", { body: {} });
+    if (!sameUser()) return;
+    await loadData();
+    if (!sameUser()) return;
+    if (aiError || aiData?.error) {
+      setMessage("Transactions synced, but AI categorization could not finish. Your latest transactions have been refreshed; retry sync to finish categorizing.");
+      return;
+    }
+    setMessage("Sync complete. AI categorized " + (aiData?.processed ?? 0) + " transactions.");
+  } catch {
+    if (!sameUser()) return;
+    await loadData();
+    if (!sameUser()) return;
+    setMessage("Sync could not finish. Please try again.");
+  } finally {
+    syncInProgress.current = false;
+    setSyncing(false);
   }
-
-  console.log("Plaid sync result:", syncData);
-  setMessage("Transactions synced. AI categorizing...");
-
-  const { data: aiData, error: aiError } =
-    await supabase.functions.invoke("ai-categorize-transactions", {
-      body: {},
-    });
-
-  if (aiError) {
-    setMessage(`AI categorization error: ${aiError.message}`);
-    return;
-  }
-
-  console.log("AI categorization result:", aiData);
-  setMessage(
-    `Sync complete. AI categorized ${aiData?.processed ?? 0} transactions.`
-  );
 }
-
-
+function AccountsPage() {
   return (
     <>
       <div className="mb-7">
@@ -514,9 +495,10 @@ async function syncTransactions() {
   <>
     <button
       onClick={syncTransactions}
+      disabled={syncing}
       className="ml-3 bg-zinc-700 hover:bg-zinc-600 text-white font-semibold px-6 py-3 rounded-xl"
     >
-      Sync Transactions
+      {syncing ? "Syncing..." : "Sync Transactions"}
     </button>
 
     
@@ -556,13 +538,14 @@ async function syncTransactions() {
 
               <button
                 onClick={signOut}
+                disabled={syncing}
                 className="border border-zinc-700 px-4 py-2 rounded-xl hover:bg-zinc-800"
               >
                 Sign out
               </button>
             </div>
 
-            <Navigation />
+            {Navigation()}
           </div>
         </header>
 
@@ -573,15 +556,24 @@ async function syncTransactions() {
             </div>
           )}
 
-          {section === "dashboard" && <Dashboard />}
+          <div className="flex flex-wrap items-center gap-3 mb-6">
+            <label htmlFor="budget-month">Budget month</label>
+            <input id="budget-month" aria-label="Budget month" type="month" value={month} disabled={syncing}
+              onChange={event => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) setMonth(event.target.value); }}
+              className="rounded-lg border border-zinc-700 bg-zinc-900 p-2" />
+            <button onClick={() => void loadData()} disabled={dataLoading || syncing} className="rounded-lg border border-zinc-700 p-2 disabled:opacity-50">Refresh</button>
+          </div>
+          {dataError ? <p role="alert" className="text-red-300 mb-6">{dataError}</p> : !dataReady && <p role="status">Loading your budget...</p>}
+          {dataReady && (section === "dashboard" || section === "budget") && summary.unassignedCount > 0 && <p className="rounded-xl border border-amber-800 p-4 mb-6 text-amber-200">{summary.unassignedCount} transactions totaling {money(summary.unassigned)} have no active budget category. These are not included in categorized spending or remaining amounts.</p>}
+          {dataReady && section === "dashboard" && Dashboard()}
 
-          {section === "transactions" && <TransactionsPage />}
+          {dataReady && section === "transactions" && TransactionsPage()}
 
-          {section === "budget" && <BudgetPage />}
+          {dataReady && section === "budget" && BudgetPage()}
 
-          {section === "accounts" && <AccountsPage />}
+          {dataReady && section === "accounts" && AccountsPage()}
 
-          {section === "settings" && <ComingSoon title="Settings" />}
+          {section === "settings" && ComingSoon({ title: "Settings" })}
         </div>
       </main>
     );

@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --experimental-transform-types --test tests/*.test.mjs supabase/functions/plaid-sync-transactions/core.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:browser": "node tests/budget.browser.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
@@ -16,6 +19,7 @@
     "react-plaid-link": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
