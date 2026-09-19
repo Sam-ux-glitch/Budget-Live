@@ -27,6 +27,7 @@ type Section =
   | "dashboard"
   | "transactions"
   | "budget"
+  | "savings"
   | "accounts"
   | "settings";
 
@@ -58,6 +59,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [section, setSection] = useState<Section>("dashboard");
+  const [editingSavingsTarget, setEditingSavingsTarget] = useState(false);
+const [savingsTargetInput, setSavingsTargetInput] = useState("");
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -99,7 +102,7 @@ if (incomeError) {
   throw incomeError;
 }
       const { start, end } = monthBounds(month);
-     const [categoryData, monthlyData, recent, connections, monthBudgets, cashflowData, paycheckData] = await Promise.all([
+const [categoryData, monthlyData, recent, connections, monthBudgets, cashflowData, paycheckData, settingsData, savingsOverrideData] = await Promise.all([
         fetchAllPages<BudgetCategory>((from, to) => supabase.from("budget_categories")
           .select("id, name, monthly_limit, category_type").eq("user_id", userId)
           .eq("is_active", true).order("sort_order").order("id").range(from, to)),
@@ -123,15 +126,29 @@ if (incomeError) {
   .eq("user_id", userId)
   .eq("month", `${month}-01`)
   .maybeSingle(),
+ 
 supabase.rpc("expected_paychecks_for_month", {
   target_month: `${month}-01`,
 }),
-     ]);
+     supabase
+  .from("settings")
+  .select("savings_per_paycheck")
+  .eq("user_id", userId)
+ .maybeSingle(),
+   supabase
+  .from("monthly_savings_overrides")
+  .select("savings_target_override")
+  .eq("user_id", userId)
+  .eq("month", `${month}-01`)
+  .maybeSingle(),
+  ]);
       if (recent.error) throw recent.error;
       if (connections.error) throw connections.error;
       if (cashflowData.error) throw cashflowData.error;
       if (paycheckData.error) throw paycheckData.error;
-      // Validate before publishing the complete snapshot.
+      if (settingsData.error) throw settingsData.error;
+      if (savingsOverrideData.error) throw savingsOverrideData.error;
+// Validate before publishing the complete snapshot.
       const monthlyOverrides = new Map(
   (monthBudgets.data ?? []).map((item) => [
     item.category_id,
@@ -152,7 +169,11 @@ const effectiveCategories = categoryData.map((category) => ({
     ? {
         ...cashflowData.data,
         paycheck_count: paycheckData.data?.length ?? 0,
-        monthly_savings_goal: (paycheckData.data?.length ?? 0) * 1750,
+monthly_savings_goal:
+  savingsOverrideData.data?.savings_target_override != null
+    ? Number(savingsOverrideData.data.savings_target_override)
+    : (paycheckData.data?.length ?? 0) *
+      Number(settingsData.data?.savings_per_paycheck ?? 1750),
       }
     : null
 );
@@ -261,6 +282,7 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
       { id: "dashboard", label: "Dashboard" },
       { id: "transactions", label: "Transactions" },
       { id: "budget", label: "Budget" },
+      { id: "savings", label: "Savings" },
       { id: "accounts", label: "Accounts" },
       { id: "settings", label: "Settings" },
     ];
@@ -538,7 +560,72 @@ target_category: category.id,
       </>
     );
   }
+function SavingsPage() {
+  async function saveSavingsTarget() {
+  const newAmount = Number(savingsTargetInput);
 
+  if (!Number.isFinite(newAmount) || newAmount < 0) {
+    window.alert("Please enter a valid savings amount.");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("monthly_savings_overrides")
+    .upsert(
+      {
+        user_id: userId,
+        month: `${month}-01`,
+        savings_target_override: newAmount,
+      },
+      { onConflict: "user_id,month" }
+    );
+
+  if (error) {
+    window.alert(`Could not update savings target: ${error.message}`);
+    return;
+  }
+
+  setEditingSavingsTarget(false);
+  await loadData();
+}
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-semibold text-zinc-100">Savings</h2>
+        <p className="text-zinc-400 mt-1">
+          Manage your savings target and monthly adjustments.
+        </p>
+      </div>
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+  <p className="text-sm text-zinc-400">Savings target for {month}</p>
+{editingSavingsTarget ? (
+  <input
+    type="number"
+    step="0.01"
+    value={savingsTargetInput}
+    onChange={(e) => setSavingsTargetInput(e.target.value)}
+    onBlur={() => void saveSavingsTarget()}
+    className="mt-2 w-48 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-3xl font-semibold text-zinc-100"
+    autoFocus
+  />
+) : (
+  <button
+    type="button"
+    onClick={() => {
+      setSavingsTargetInput(String(cashflow?.monthly_savings_goal ?? 0));
+      setEditingSavingsTarget(true);
+    }}
+    className="mt-2 text-3xl font-semibold text-zinc-100 hover:text-zinc-300"
+    title="Click to edit this month's savings target"
+  >
+    {money(cashflow?.monthly_savings_goal ?? 0)}
+  </button>
+)}
+</div>
+    </div>
+  );
+}
   function BudgetPage() {
     async function editMonthlyBudget(categoryName: string, currentAmount: number) {
   const entered = window.prompt(
@@ -831,6 +918,7 @@ function AccountsPage() {
           {dataReady && section === "transactions" && TransactionsPage()}
 
           {dataReady && section === "budget" && BudgetPage()}
+{dataReady && section === "savings" && SavingsPage()}
 
           {dataReady && section === "accounts" && AccountsPage()}
 
