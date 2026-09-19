@@ -1,0 +1,2 @@
+[functions.plaid-sync-transactions]
+verify_jwt = true

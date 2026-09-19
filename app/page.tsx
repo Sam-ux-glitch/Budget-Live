@@ -24,9 +24,10 @@ type Transaction = {
   amount: number;
   account_name: string | null;
   categorization_source: string;
-    budget_categories: {
-    name: string;
-  }[] | null;
+  budget_categories:
+  | { name: string }
+  | { name: string }[]
+  | null;
 };
 type Section =
   | "dashboard"
@@ -118,7 +119,7 @@ export default function Home() {
       setMessage(transactionError.message);
       return;
     }
-
+console.log("TRANSACTION DATA:", transactionData);
     setTransactions((transactionData ?? []) as Transaction[]);
   }
 async function createPlaidLinkToken() {
@@ -245,9 +246,14 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
               <p className="text-zinc-500 text-sm mt-1">
                 {transaction.transaction_date}
 
-             {transaction.budget_categories?.[0]?.name
-  ? ` • ${transaction.budget_categories[0].name}`
+           {transaction.budget_categories
+  ? ` • ${
+      Array.isArray(transaction.budget_categories)
+        ? transaction.budget_categories[0]?.name ?? "Uncategorized"
+        : transaction.budget_categories.name
+    }`
   : " • Uncategorized"}
+
               </p>
 
               {transaction.account_name && (
@@ -419,6 +425,54 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
     );
   }
 function AccountsPage() {
+  const [bankConnections, setBankConnections] = useState<any[]>([]);
+  useEffect(() => {
+  async function loadBankConnections() {
+    const { data, error } = await supabase
+      .from("bank_connections")
+      .select("*")
+      .eq("status", "active");
+
+    if (!error) {
+      setBankConnections(data ?? []);
+    }
+  }
+
+  loadBankConnections();
+}, []);
+async function syncTransactions() {
+  setMessage("Syncing transactions...");
+
+  const { data: syncData, error: syncError } =
+    await supabase.functions.invoke("plaid-sync-transactions", {
+      body: {},
+    });
+
+  if (syncError) {
+    setMessage(`Sync error: ${syncError.message}`);
+    return;
+  }
+
+  console.log("Plaid sync result:", syncData);
+  setMessage("Transactions synced. AI categorizing...");
+
+  const { data: aiData, error: aiError } =
+    await supabase.functions.invoke("ai-categorize-transactions", {
+      body: {},
+    });
+
+  if (aiError) {
+    setMessage(`AI categorization error: ${aiError.message}`);
+    return;
+  }
+
+  console.log("AI categorization result:", aiData);
+  setMessage(
+    `Sync complete. AI categorized ${aiData?.processed ?? 0} transactions.`
+  );
+}
+
+
   return (
     <>
       <div className="mb-7">
@@ -434,6 +488,14 @@ function AccountsPage() {
         <p className="text-zinc-400 mt-2 mb-6">
           Securely connect your accounts through Plaid.
         </p>
+        {bankConnections.length > 0 && (
+  <div className="mb-6 rounded-xl border border-green-800 bg-green-950/30 p-4">
+    <p className="font-semibold text-green-400">✓ Bank connected</p>
+    <p className="text-sm text-zinc-400 mt-1">
+      {bankConnections.length} active connection{bankConnections.length !== 1 ? "s" : ""}
+    </p>
+  </div>
+)}
 
         <button
           onClick={() => {
@@ -448,6 +510,18 @@ function AccountsPage() {
         >
           {linkToken ? "Continue Connecting" : "Connect Bank"}
         </button>
+      {bankConnections.length > 0 && (
+  <>
+    <button
+      onClick={syncTransactions}
+      className="ml-3 bg-zinc-700 hover:bg-zinc-600 text-white font-semibold px-6 py-3 rounded-xl"
+    >
+      Sync Transactions
+    </button>
+
+    
+  </>
+)}
       </div>
     </>
   );
