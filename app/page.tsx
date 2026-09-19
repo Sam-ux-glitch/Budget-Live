@@ -48,6 +48,12 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const syncInProgress = useRef(false);
   const [categories, setCategories] = useState<BudgetCategory[]>([]);
+ const [cashflow, setCashflow] = useState<{
+  expected_income: number;
+  projected_surplus: number;
+  monthly_savings_goal: number;
+  paycheck_count: number;
+} | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
   const [linkToken, setLinkToken] = useState<string | null>(null);
@@ -76,9 +82,24 @@ export default function Home() {
     const version = ++requestVersion.current;
     setDataLoading(true);
     setDataError("");
+   
     try {
+      const { error: budgetMonthError } = await supabase.rpc("create_month_budget", {
+  target_month: `${month}-01`,
+});
+
+if (budgetMonthError) {
+  throw budgetMonthError;
+}
+      const { error: incomeError } = await supabase.rpc("create_month_income", {
+  target_month: `${month}-01`,
+});
+
+if (incomeError) {
+  throw incomeError;
+}
       const { start, end } = monthBounds(month);
-     const [categoryData, monthlyData, recent, connections, monthBudgets] = await Promise.all([
+     const [categoryData, monthlyData, recent, connections, monthBudgets, cashflowData, paycheckData] = await Promise.all([
         fetchAllPages<BudgetCategory>((from, to) => supabase.from("budget_categories")
           .select("id, name, monthly_limit, category_type").eq("user_id", userId)
           .eq("is_active", true).order("sort_order").order("id").range(from, to)),
@@ -96,9 +117,20 @@ export default function Home() {
   .select("category_id,budget_amount")
   .eq("user_id", userId)
   .eq("month", `${month}-01`),
-      ]);
+ supabase
+  .from("monthly_savings_summary")
+  .select("expected_income,projected_surplus,monthly_savings_goal")
+  .eq("user_id", userId)
+  .eq("month", `${month}-01`)
+  .maybeSingle(),
+supabase.rpc("expected_paychecks_for_month", {
+  target_month: `${month}-01`,
+}),
+     ]);
       if (recent.error) throw recent.error;
       if (connections.error) throw connections.error;
+      if (cashflowData.error) throw cashflowData.error;
+      if (paycheckData.error) throw paycheckData.error;
       // Validate before publishing the complete snapshot.
       const monthlyOverrides = new Map(
   (monthBudgets.data ?? []).map((item) => [
@@ -115,13 +147,22 @@ const effectiveCategories = categoryData.map((category) => ({
     summarizeBudget(effectiveCategories, monthlyData, month);
       if (version !== requestVersion.current) return false;
      setCategories(effectiveCategories);
+  setCashflow(
+  cashflowData.data
+    ? {
+        ...cashflowData.data,
+        paycheck_count: paycheckData.data?.length ?? 0,
+        monthly_savings_goal: (paycheckData.data?.length ?? 0) * 1750,
+      }
+    : null
+);
       setMonthlyTransactions(monthlyData);
       setTransactions((recent.data ?? []) as Transaction[]);
       setBankConnections(connections.data ?? []);
       setLoadedScope(userId + ":" + month);
       return true;
-    } catch {
-      if (version === requestVersion.current) setDataError("Could not load your budget. Refresh to try again; no partial totals are shown.");
+  } catch (error) {
+   if (version === requestVersion.current) setDataError(`Could not load your budget: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
       return false;
     } finally {
       if (version === requestVersion.current) setDataLoading(false);
@@ -243,6 +284,46 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
     );
   }
 
+   async function changeTransactionCategory(
+  transactionId: string,
+  categoryName: string
+) {
+  const category = categories.find(
+    (item) => item.name === categoryName
+  );
+
+  if (!category) {
+    window.alert("Category not found.");
+    return;
+  }
+
+  const { error } = await supabase.rpc("confirm_transaction_category", {
+   target_transaction: transactionId,
+target_category: category.id,
+  });
+  if (!error) {
+  const { error: memoryError } = await supabase.rpc(
+    "remember_merchant_category",
+    {
+      target_transaction: transactionId,
+      target_category: category.id,
+    }
+  );
+
+  if (memoryError) {
+    window.alert(
+      `Category changed, but merchant memory failed: ${memoryError.message}`
+    );
+  }
+}
+
+  if (error) {
+    window.alert(`Could not change category: ${error.message}`);
+    return;
+  }
+
+  await loadData();
+}
   function TransactionList() {
     if (transactions.length === 0) {
       return (
@@ -282,6 +363,29 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
   : " • Uncategorized"}
 
               </p>
+              <select
+  value={
+    transaction.budget_categories
+      ? Array.isArray(transaction.budget_categories)
+        ? transaction.budget_categories[0]?.name ?? ""
+        : transaction.budget_categories.name
+      : ""
+  }
+  onChange={(event) =>
+    void changeTransactionCategory(transaction.id, event.target.value)
+  }
+  className="mt-2 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
+>
+  <option value="" disabled>
+    Choose category
+  </option>
+
+  {categories.map((category) => (
+    <option key={category.id} value={category.name}>
+      {category.name}
+    </option>
+  ))}
+</select>
 
               {transaction.account_name && (
                 <p className="text-zinc-600 text-xs mt-1">
@@ -347,6 +451,29 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
             </p>
           </div>
         </div>
+        {cashflow && (
+  <div className="grid gap-4 md:grid-cols-4 mb-8">
+    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
+      <p className="text-zinc-400 text-sm">Expected Income</p>
+      <p className="text-2xl font-bold">{money(cashflow.expected_income)}</p>
+    </div>
+
+    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
+      <p className="text-zinc-400 text-sm">Monthly Budget</p>
+      <p className="text-2xl font-bold">{money(summary.budget)}</p>
+    </div>
+
+    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
+      <p className="text-zinc-400 text-sm">Projected Left Over</p>
+      <p className="text-2xl font-bold">{money(cashflow.projected_surplus)}</p>
+    </div>
+
+    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
+      <p className="text-zinc-400 text-sm">Savings Goal</p>
+      <p className="text-2xl font-bold">{money(cashflow.monthly_savings_goal)}</p>
+    </div>
+  </div>
+)}
 
         <div className="flex justify-between items-end mb-5">
           <div>
@@ -396,6 +523,7 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
   }
 
   function TransactionsPage() {
+   
     return (
       <>
         <div className="mb-7">
