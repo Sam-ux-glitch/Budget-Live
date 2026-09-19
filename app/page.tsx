@@ -78,7 +78,7 @@ export default function Home() {
     setDataError("");
     try {
       const { start, end } = monthBounds(month);
-      const [categoryData, monthlyData, recent, connections] = await Promise.all([
+     const [categoryData, monthlyData, recent, connections, monthBudgets] = await Promise.all([
         fetchAllPages<BudgetCategory>((from, to) => supabase.from("budget_categories")
           .select("id, name, monthly_limit, category_type").eq("user_id", userId)
           .eq("is_active", true).order("sort_order").order("id").range(from, to)),
@@ -91,13 +91,30 @@ export default function Home() {
           .eq("user_id", userId).is("plaid_removed_at", null)
           .order("transaction_date", { ascending: false }).order("id").limit(100),
         supabase.from("bank_connections").select("id").eq("user_id", userId).eq("status", "active"),
+        supabase
+  .from("budget_months")
+  .select("category_id,budget_amount")
+  .eq("user_id", userId)
+  .eq("month", `${month}-01`),
       ]);
       if (recent.error) throw recent.error;
       if (connections.error) throw connections.error;
       // Validate before publishing the complete snapshot.
-      summarizeBudget(categoryData, monthlyData, month);
+      const monthlyOverrides = new Map(
+  (monthBudgets.data ?? []).map((item) => [
+    item.category_id,
+    Number(item.budget_amount),
+  ])
+);
+
+const effectiveCategories = categoryData.map((category) => ({
+  ...category,
+  monthly_limit:
+    monthlyOverrides.get(category.id) ?? category.monthly_limit,
+}));
+    summarizeBudget(effectiveCategories, monthlyData, month);
       if (version !== requestVersion.current) return false;
-      setCategories(categoryData);
+     setCategories(effectiveCategories);
       setMonthlyTransactions(monthlyData);
       setTransactions((recent.data ?? []) as Transaction[]);
       setBankConnections(connections.data ?? []);
@@ -395,8 +412,74 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
   }
 
   function BudgetPage() {
+    async function editMonthlyBudget(categoryName: string, currentAmount: number) {
+  const entered = window.prompt(
+    `Enter the budget for ${categoryName} for ${month}:`,
+    String(currentAmount)
+  );
+
+  if (entered === null) return;
+
+  const newAmount = Number(entered);
+
+  if (!Number.isFinite(newAmount) || newAmount < 0) {
+    window.alert("Please enter a valid budget amount.");
+    return;
+  }
+  
+  
+
+  const { error } = await supabase.rpc("set_month_budget", {
+    target_month: `${month}-01`,
+    target_category: categoryName,
+    new_amount: newAmount,
+  });
+
+  if (error) {
+    window.alert(`Could not update budget: ${error.message}`);
+    return;
+  }
+
+  await loadData();
+}
+
+async function editDefaultBudget(categoryName: string, currentAmount: number) {
+  const entered = window.prompt(
+    `Enter the normal monthly budget for ${categoryName}:`,
+    String(currentAmount)
+  );
+
+  if (entered === null) return;
+
+  const newAmount = Number(entered);
+
+  if (!Number.isFinite(newAmount) || newAmount < 0) {
+    window.alert("Please enter a valid budget amount.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Change ${categoryName} to ${money(newAmount)} going forward?\n\nThis will not change previous months.`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase.rpc("set_default_budget", {
+    target_category: categoryName,
+    new_amount: newAmount,
+    effective_date: `${month}-01`,
+  });
+
+  if (error) {
+    window.alert(`Could not update default budget: ${error.message}`);
+    return;
+  }
+
+  await loadData();
+}
     return <>
       <h2 className="text-3xl font-bold mb-2">Budget</h2>
+      
       <p className="text-zinc-400 mb-6">Categorized spending includes pending purchases and subtracts refunds and credits. Transfers, excluded transactions, and removed transactions do not count. Past months use your current category limits.</p>
       <div className="grid gap-4 md:grid-cols-3 mb-6">
         <div className="rounded-2xl bg-zinc-900 p-5">Budgeted<p className="text-2xl font-bold">{money(summary.budget)}</p></div>
@@ -408,6 +491,19 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
         {summary.rows.map(category => <div key={category.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
           <h3 className="font-semibold text-lg">{category.name}</h3>
           <p className="text-zinc-400 text-sm capitalize">{category.category_type}</p>
+          <button
+  onClick={() => editMonthlyBudget(category.name, category.limit)}
+  className="mt-2 text-sm text-green-400 hover:text-green-300"
+>
+  Edit budget
+</button>
+<button
+  onClick={() => editDefaultBudget(category.name, category.limit)}
+  className="mt-2 ml-4 text-sm text-blue-400 hover:text-blue-300"
+>
+  Change default
+</button>
+
           <dl className="grid grid-cols-3 gap-3 mt-4">
             <div><dt className="text-zinc-400 text-sm">Budgeted</dt><dd>{money(category.limit)}</dd></div>
             <div><dt className="text-zinc-400 text-sm">Spent</dt><dd>{money(category.spent)}</dd></div>
@@ -556,13 +652,50 @@ function AccountsPage() {
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3 mb-6">
-            <label htmlFor="budget-month">Budget month</label>
-            <input id="budget-month" aria-label="Budget month" type="month" value={month} disabled={syncing}
-              onChange={event => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) setMonth(event.target.value); }}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 p-2" />
-            <button onClick={() => void loadData()} disabled={dataLoading || syncing} className="rounded-lg border border-zinc-700 p-2 disabled:opacity-50">Refresh</button>
-          </div>
+         <div className="flex flex-wrap items-center gap-3 mb-6">
+  <span className="font-medium">
+    Budget month: {new Date(`${month}-02`).toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    })}
+  </span>
+
+  <button
+    onClick={() => {
+      const [year, monthNumber] = month.split("-").map(Number);
+      const date = new Date(year, monthNumber - 2, 1);
+      setMonth(
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+      );
+    }}
+    disabled={syncing}
+    className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
+  >
+    ← Previous
+  </button>
+
+  <button
+    onClick={() => {
+      const [year, monthNumber] = month.split("-").map(Number);
+      const date = new Date(year, monthNumber, 1);
+      setMonth(
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+      );
+    }}
+    disabled={syncing}
+    className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
+  >
+    Next →
+  </button>
+
+  <button
+    onClick={() => void loadData()}
+    disabled={dataLoading || syncing}
+    className="rounded-lg border border-zinc-700 p-2 disabled:opacity-50"
+  >
+    Refresh
+  </button>
+</div>
           {dataError ? <p role="alert" className="text-red-300 mb-6">{dataError}</p> : !dataReady && <p role="status">Loading your budget...</p>}
           {dataReady && (section === "dashboard" || section === "budget") && summary.unassignedCount > 0 && <p className="rounded-xl border border-amber-800 p-4 mb-6 text-amber-200">{summary.unassignedCount} transactions totaling {money(summary.unassigned)} have no active budget category. These are not included in categorized spending or remaining amounts.</p>}
           {dataReady && section === "dashboard" && Dashboard()}
