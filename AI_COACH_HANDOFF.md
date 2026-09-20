@@ -1,3 +1,5 @@
+> Current milestone: see [IOS_TESTFLIGHT_HANDOFF.md](IOS_TESTFLIGHT_HANDOFF.md) for iOS, Home/Lock widgets, approved AI actions, collapsed Settings, deployment and Mac steps. The content below records the earlier milestone.
+
 # AI Budget Coach handoff — 2026-09-20
 
 ## Delivered state

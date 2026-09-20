@@ -1,3 +1,5 @@
+> Current milestone: see [IOS_TESTFLIGHT_HANDOFF.md](IOS_TESTFLIGHT_HANDOFF.md) for iOS, Home/Lock widgets, approved AI actions, collapsed Settings, deployment and Mac steps. The content below records the earlier milestone.
+
 # Latest handoff: AI Budget Coach — 2026-09-20
 
 The integrated AI Coach is implemented and deployed using the existing Supabase OpenAI secret. See [AI_COACH_HANDOFF.md](AI_COACH_HANDOFF.md) for architecture, security, tests, deployment, commit identifiers, limits and next steps. Savings V2 and the existing categorization/Plaid flows are preserved. No new migration or key setup is pending.
