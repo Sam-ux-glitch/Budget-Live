@@ -1,5 +1,7 @@
 # Savings V2
 
+Update: the read-only AI Coach is now implemented. See [AI_COACH_HANDOFF.md](AI_COACH_HANDOFF.md) for the delivered behavior; the original next-step notes below remain historical context.
+
 ## Behavior and sources
 
 Savings remains a top-level section. The four planning cards show expected income, selected-month planned spending, projected surplus before savings, and the editable monthly savings target. A separate automatic target shows saved savings-per-paycheck multiplied by the expected paycheck count, even when a monthly override is active.

@@ -1,3 +1,9 @@
+# Latest handoff: AI Budget Coach — 2026-09-20
+
+The integrated AI Coach is implemented and deployed using the existing Supabase OpenAI secret. See [AI_COACH_HANDOFF.md](AI_COACH_HANDOFF.md) for architecture, security, tests, deployment, commit identifiers, limits and next steps. Savings V2 and the existing categorization/Plaid flows are preserved. No new migration or key setup is pending.
+
+---
+
 # Latest handoff: Savings V2 - 2026-09-20
 
 - Work is on codex/savings-v2; checkpoint f797279 preserves the clean abbe5c4 starting state.
