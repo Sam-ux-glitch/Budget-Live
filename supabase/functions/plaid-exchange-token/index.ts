@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.116.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,9 +47,9 @@ Deno.serve(async (req) => {
     }
 
     const clientId = Deno.env.get("PLAID_CLIENT_ID");
-    const secret =
-      Deno.env.get("PLAID_SANDBOX_SECRET") ||
-      Deno.env.get("PLAID_SECRET");
+    const env=Deno.env.get("PLAID_ENV")??"sandbox";
+    if(!["sandbox","production"].includes(env))throw new Error("Invalid Plaid environment");
+    const secret=env==="sandbox"?Deno.env.get("PLAID_SANDBOX_SECRET")||Deno.env.get("PLAID_SECRET"):Deno.env.get("PLAID_SECRET");
 
     if (!clientId || !secret) {
       throw new Error("Missing Plaid credentials");
@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
 
     // Exchange temporary public token with Plaid
     const response = await fetch(
-      "https://sandbox.plaid.com/item/public_token/exchange",
+      "https://"+env+".plaid.com/item/public_token/exchange",
       {
         method: "POST",
         headers: {
@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     );
 
     if (vaultError) {
-      console.error("Vault storage error:", vaultError);
+      console.error("Vault storage failed");
       throw new Error("Unable to securely save Plaid connection");
     }
 
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
       );
 
     if (tokenRecordError) {
-      console.error("Token record error:", tokenRecordError);
+      console.error("Token record failed");
       throw new Error("Unable to save Plaid token record");
     }
 
@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
       );
 
     if (connectionError) {
-      console.error("Connection storage error:", connectionError);
+      console.error("Connection storage failed");
       throw new Error("Unable to save bank connection");
     }
 
@@ -159,12 +159,12 @@ Deno.serve(async (req) => {
         },
       }
     );
-  } catch (error) {
-    console.error(error);
+  } catch {
+    console.error("Connection unavailable");
 
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Bank connection could not finish. Please retry.",
       }),
       {
         status: 400,

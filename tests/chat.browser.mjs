@@ -37,7 +37,7 @@ try {
  await page.getByPlaceholder('Email address').fill(user.email);await page.getByPlaceholder('Password').fill('fixture-only-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();
  await page.getByRole('button',{name:'AI Coach',exact:true}).click();
  await expect(page.getByRole('heading',{name:'AI Coach',exact:true})).toBeVisible();
- await expect(page.getByText('Suggestions only.',{exact:false})).toBeVisible();
+ await expect(page.getByText('Chat never applies changes by itself.',{exact:false})).toBeVisible();
  for(const question of ['Groceries are costing an extra $100 this week. Where can I take that money from?','I have an unexpected $300 dental expense this month. How should I adjust the budget?','I spent less than expected this month. How much extra can go to savings?']) {
   await page.getByRole('button',{name:question,exact:true}).click();await expect(page.getByRole('log')).toContainText('expected income is $3,000');assert.equal(requests.at(-1).messages.at(-1).content,question);await page.getByRole('button',{name:'New chat',exact:true}).click();
  }

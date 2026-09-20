@@ -16,19 +16,20 @@ function fixture(options={}) {
   const send=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
   if(url.hostname==='api.openai.com') {
    const body=JSON.parse(init.body);prompts.push(body);
-   assert.equal(body.store,false);assert.equal(body.max_output_tokens,900);assert.equal(body.tools,undefined);
+   assert.equal(body.store,false);assert.equal(body.max_output_tokens,1800);assert.equal(body.tools,undefined);
    assert.equal(body.input[0].role,'user');
    assert.ok(!JSON.stringify(body).includes(userId));
    assert.ok(!JSON.stringify(body).includes('account-secret'));
    if(options.providerError) return send({error:'secret upstream detail'},429);
    if(options.hold) await options.hold;
-   return send({status:options.incomplete?'incomplete':'completed',output:[{type:'message',content:[{type:'output_text',text:'Your data: selected month. Suggestion: verify remaining bills before reallocating.'}]}]});
+   return send({status:options.incomplete?'incomplete':'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({answer:'Your data: selected month. Suggestion: verify remaining bills before reallocating.',actions:options.actions??[]})}]}]});
   }
   assert.equal(url.hostname,'fixture.supabase.co');
   if(url.pathname==='/auth/v1/user') return options.invalidAuth?send({message:'invalid'},401):send({id:options.userId||userId,aud:'authenticated'});
   if(url.pathname==='/rest/v1/rpc/expected_paychecks_for_month') {
    assert.equal(method,'POST'); assert.equal(JSON.parse(init.body).target_month,month+'-01'); return send([{},{}]);
   }
+  if(url.pathname==='/rest/v1/rpc/create_coach_proposal'){assert.equal(method,'POST');assert.deepEqual(JSON.parse(init.body).p_actions,options.actions);return send({id:'proposal-id',actions:options.actions});}
   assert.equal(method,'GET','Coach must never write financial data');
   assert.equal(url.searchParams.get('user_id'),'eq.'+(options.userId||userId));
   const table=url.pathname.split('/').pop();

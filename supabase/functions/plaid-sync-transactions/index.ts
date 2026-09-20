@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.116.0";
 import { collectSync, SyncError, type SyncPage } from "./core.ts";
 const cors = { 'Access-Control-Allow-Origin':'*',
   'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type',
@@ -30,7 +30,9 @@ Deno.serve(async(req)=>{
     if(!connections?.length) return reply({error:'No active bank connection found'},404);
     const clientId=Deno.env.get('PLAID_CLIENT_ID');
     // Matches the existing Sandbox-only Link/exchange functions. Never guess an environment from a token.
-    const secret=Deno.env.get('PLAID_SANDBOX_SECRET') || Deno.env.get('PLAID_SECRET');
+    const env=Deno.env.get('PLAID_ENV')??'sandbox';
+    if(!['sandbox','production'].includes(env))throw new SyncError('CONFIGURATION_ERROR');
+    const secret=env==='sandbox'?Deno.env.get('PLAID_SANDBOX_SECRET')||Deno.env.get('PLAID_SECRET'):Deno.env.get('PLAID_SECRET');
     if(!clientId || !secret) throw new SyncError('CONFIGURATION_ERROR');
     const results=[];
     for(const connection of connections) {
@@ -42,7 +44,7 @@ Deno.serve(async(req)=>{
           {p_user_id:user.id,p_item_id:connection.plaid_item_id});
         if(tokenError || typeof accessToken!=='string') throw new SyncError('CONNECTION_UNAVAILABLE');
         const batch=await collectSync(record.sync_cursor,async(cursor)=>{
-          const response=await fetch('https://sandbox.plaid.com/transactions/sync',{
+          const response=await fetch('https://'+env+'.plaid.com/transactions/sync',{
             method:'POST',headers:{'Content-Type':'application/json','Plaid-Version':'2020-09-14'},
             body:JSON.stringify({client_id:clientId,secret,access_token:accessToken,count:500,...(cursor?{cursor}:{})}),
             signal:AbortSignal.timeout(20000),

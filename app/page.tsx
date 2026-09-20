@@ -6,12 +6,17 @@ import { buildSavingsPlan, type SavingsInputs } from "./lib/savings";
 import BudgetPage from "./components/BudgetPage";
 import SavingsPlanner from "./components/SavingsPlanner";
 import BudgetCoach from "./components/BudgetCoach";
+import ConnectionList from "./components/ConnectionList";
+import SettingsPage, {PasswordForm} from "./components/SettingsPage";
+import {App} from "@capacitor/app";
+import {nativeIOS, BudgetNative, setWidgetUser, refreshWidget} from "./lib/native";
 import { createClient } from "@supabase/supabase-js";
 import { usePlaidLink } from "react-plaid-link";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+  {auth:{flowType:"pkce"}}
 );
 
 type Transaction = BudgetTransaction & {
@@ -40,11 +45,16 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [recovery,setRecovery]=useState(false);
+  const [defaults,setDefaults]=useState<Record<string,number>>({});
+  const [budgetSaving,setBudgetSaving]=useState(false);
+  const budgetWrite=useRef(false);
+  const recoveryUrl=useRef("");
   const [userId, setUserId] = useState<string | null>(null);
   const loggedIn = userId !== null;
   const [month, setMonth] = useState(currentMonth);
   const [monthlyTransactions, setMonthlyTransactions] = useState<BudgetTransaction[]>([]);
-  const [bankConnections, setBankConnections] = useState<{ id: string }[]>([]);
+  const [bankConnections, setBankConnections] = useState<{ id: string; institution_name?: string|null; status?: string }[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState("");
   const [loadedScope, setLoadedScope] = useState("");
@@ -64,9 +74,11 @@ export default function Home() {
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (_event === "PASSWORD_RECOVERY") setRecovery(true);
       const nextUser = session?.user.id ?? null;
       if (currentUser.current !== nextUser) {
         currentUser.current = nextUser;
+        void setWidgetUser(nextUser).catch(()=>setMessage("Widget could not be cleared. Reopen the app before sharing this device."));
         invalidateRequests();
         setUserId(nextUser);
         setLoadedScope("");
@@ -115,7 +127,7 @@ const [categoryData, monthlyData, recent, connections, monthBudgets, cashflowDat
           .select("id, category_id, transaction_date, merchant_name, description, amount, account_name, categorization_source, excluded_from_budget, is_transfer, plaid_removed_at, budget_categories(name)")
           .eq("user_id", userId).is("plaid_removed_at", null)
           .order("transaction_date", { ascending: false }).order("id").limit(100),
-        supabase.from("bank_connections").select("id").eq("user_id", userId).eq("status", "active"),
+        supabase.from("bank_connections").select("id,institution_name,status").eq("user_id", userId),
         supabase
   .from("budget_months")
   .select("category_id,budget_amount")
@@ -172,7 +184,9 @@ const effectiveCategories = categoryData.map((category) => ({
       };
       buildSavingsPlan(savingsInputs, summarizeBudget(effectiveCategories, monthlyData, month));
       if (version !== requestVersion.current) return false;
+      setDefaults(Object.fromEntries(categoryData.map(c=>[c.id,Number(c.monthly_limit)])));
       setCategories(effectiveCategories);
+      void refreshWidget(supabase,userId).catch(()=>setMessage("Budget refreshed. Widget could not update; open the app to retry."));
       setCashflow(savingsInputs);
       setMonthlyTransactions(monthlyData);
       setTransactions((recent.data ?? []) as Transaction[]);
@@ -191,6 +205,30 @@ const effectiveCategories = categoryData.map((category) => ({
     void Promise.resolve().then(() => { if (active) void loadData(); });
     return () => { active = false; invalidateRequests(); };
   }, [loadData, invalidateRequests]);
+  useEffect(()=>{
+    if(!nativeIOS())return;
+    let active=true;
+    const handle=async(url:string)=>{
+      try {const parsed=new URL(url);if(parsed.protocol!=="budgetlive:")return;
+      if(parsed.host==="budget"){setMonth(currentMonth());setSection("budget");return;}
+      if(parsed.host!=="auth"||parsed.pathname!=="/recovery")return;
+      if(recoveryUrl.current===url)return;
+      const code=parsed.searchParams.get("code");
+      if(!code)return;
+      recoveryUrl.current=url;
+      const {error}=await supabase.auth.exchangeCodeForSession(code);
+      if(active){if(error)setMessage("Recovery link expired. Request a new link.");else setRecovery(true);}
+      }catch{if(active)setMessage("Recovery link could not be opened.");}
+    };
+    const listener=App.addListener("appUrlOpen",event=>{void handle(event.url);});
+    void App.getLaunchUrl().then(result=>{if(result)void handle(result.url);});
+    return()=>{active=false;void listener.then(h=>h.remove());};
+  },[]);
+  useEffect(()=>{
+    if(!nativeIOS())return;
+    const foreground=App.addListener("appStateChange",event=>{if(event.isActive&&currentUser.current)void loadData();});
+    return()=>{void foreground.then(h=>h.remove());};
+  },[loadData]);
   async function signIn() {
     setMessage("");
     setLoading(true);
@@ -204,7 +242,7 @@ async function createPlaidLinkToken() {
   setMessage("");
 
   const { data, error } = await supabase.functions.invoke(
-    "plaid-create-link-token"
+    "plaid-create-link-token", {body:{platform:nativeIOS()?"ios":"web"}}
   );
 
   if (currentUser.current !== userId) return;
@@ -218,7 +256,14 @@ async function createPlaidLinkToken() {
     return;
   }
 
-  setLinkToken(data.link_token);
+  if(nativeIOS()){
+    try {const result=await BudgetNative.openPlaid({token:data.link_token});
+      if(currentUser.current!==userId)return;
+      const {error:exchangeError}=await supabase.functions.invoke("plaid-exchange-token",{body:{public_token:result.publicToken}});
+      if(exchangeError)throw new Error("Bank connection could not finish. Please retry.");
+      await loadData();setMessage("Bank connected successfully.");
+    }catch{setMessage("Bank connection canceled or unavailable. Please retry.");}
+  }else setLinkToken(data.link_token);
 }
   async function signOut() {
     const { error } = await supabase.auth.signOut();
@@ -259,11 +304,13 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
       return;
     }
 
+    setLinkToken(null);
     await loadData();
     if (currentUser.current === userId) setMessage("Bank connected successfully.");
   },
 
   onExit: (error) => {
+    setLinkToken(null);
     if (error) {
       setMessage(
         `Plaid error: ${error.display_message || error.error_message}`
@@ -588,71 +635,19 @@ target_category: category.id,
       setSavingSavings(false);
     }
   }
-  async function editMonthlyBudget(categoryName: string, currentAmount: number) {
-  const entered = window.prompt(
-    `Enter the budget for ${categoryName} for ${month}:`,
-    String(currentAmount)
-  );
-
-  if (entered === null) return;
-
-  const newAmount = Number(entered);
-
-  if (!Number.isFinite(newAmount) || newAmount < 0) {
-    window.alert("Please enter a valid budget amount.");
-    return;
+  async function saveBudget(categoryName: string, amount: number, isDefault: boolean) {
+    if (!userId || currentUser.current !== userId || budgetWrite.current || !dataReady) throw new Error("Please refresh and retry.");
+    budgetWrite.current=true;setBudgetSaving(true);
+    try {
+      const today=new Date();const nextMonth=new Date(today.getFullYear(),today.getMonth()+1,1);
+      const effectiveDate=nextMonth.getFullYear()+"-"+String(nextMonth.getMonth()+1).padStart(2,"0")+"-01";
+      const {error}=await supabase.rpc(isDefault?"set_default_budget":"set_month_budget",isDefault?{target_category:categoryName,new_amount:amount,effective_date:effectiveDate}:{target_category:categoryName,new_amount:amount,target_month:month+"-01"});
+      if(error)throw new Error("Could not save budget. "+error.message);
+      if(currentUser.current===userId)await loadData();
+    }finally{budgetWrite.current=false;setBudgetSaving(false);}
   }
-  
-  
-
-  const { error } = await supabase.rpc("set_month_budget", {
-    target_month: `${month}-01`,
-    target_category: categoryName,
-    new_amount: newAmount,
-  });
-
-  if (error) {
-    window.alert(`Could not update budget: ${error.message}`);
-    return;
-  }
-
-  await loadData();
-}
-
-async function editDefaultBudget(categoryName: string, currentAmount: number) {
-  const entered = window.prompt(
-    `Enter the normal monthly budget for ${categoryName}:`,
-    String(currentAmount)
-  );
-
-  if (entered === null) return;
-
-  const newAmount = Number(entered);
-
-  if (!Number.isFinite(newAmount) || newAmount < 0) {
-    window.alert("Please enter a valid budget amount.");
-    return;
-  }
-
-  const confirmed = window.confirm(
-    `Change ${categoryName} to ${money(newAmount)} going forward?\n\nThis will not change previous months.`
-  );
-
-  if (!confirmed) return;
-
-  const { error } = await supabase.rpc("set_default_budget", {
-    target_category: categoryName,
-    new_amount: newAmount,
-    effective_date: `${month}-01`,
-  });
-
-  if (error) {
-    window.alert(`Could not update default budget: ${error.message}`);
-    return;
-  }
-
-  await loadData();
-}
+  const editMonthlyBudget=(name:string,amount:number)=>saveBudget(name,amount,false);
+  const editDefaultBudget=(name:string,amount:number)=>saveBudget(name,amount,true);
 async function syncTransactions() {
   if (syncInProgress.current || !userId) return;
   const sameUser = () => currentUser.current === userId;
@@ -704,11 +699,12 @@ function AccountsPage() {
         <p className="text-zinc-400 mt-2 mb-6">
           Securely connect your accounts through Plaid.
         </p>
-        {bankConnections.length > 0 && (
+        <ConnectionList connections={bankConnections} supabase={supabase} onRefresh={loadData}/>
+        {bankConnections.some(c=>!c.status||c.status==="active") && (
   <div className="mb-6 rounded-xl border border-green-800 bg-green-950/30 p-4">
     <p className="font-semibold text-green-400">✓ Bank connected</p>
     <p className="text-sm text-zinc-400 mt-1">
-      {bankConnections.length} active connection{bankConnections.length !== 1 ? "s" : ""}
+      {bankConnections.filter(connection => connection.status === "active").length} active connection{bankConnections.filter(connection => connection.status === "active").length !== 1 ? "s" : ""}
     </p>
   </div>
 )}
@@ -726,11 +722,11 @@ function AccountsPage() {
         >
           {linkToken ? "Continue Connecting" : "Connect Bank"}
         </button>
-      {bankConnections.length > 0 && (
+      {bankConnections.some(c=>!c.status||c.status==="active") && (
   <>
     <button
       onClick={syncTransactions}
-      disabled={syncing || savingSavings}
+      disabled={syncing || savingSavings || budgetSaving}
       className="ml-3 bg-zinc-700 hover:bg-zinc-600 text-white font-semibold px-6 py-3 rounded-xl"
     >
       {syncing ? "Syncing..." : "Sync Transactions"}
@@ -743,20 +739,7 @@ function AccountsPage() {
     </>
   );
 }
-  function ComingSoon({ title }: { title: string }) {
-    return (
-      <div>
-        <h2 className="text-3xl font-bold">{title}</h2>
-
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-10 mt-7 text-center">
-          <p className="text-zinc-400">
-            We&apos;ll build this section next.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
+  if (recovery && loggedIn) return <main className="min-h-screen bg-zinc-950 text-white p-6"><section className="max-w-md mx-auto space-y-5"><h1 className="text-2xl font-bold">Reset password</h1><PasswordForm supabase={supabase} onComplete={()=>{setRecovery(false);setMessage("Password changed.");}}/><button onClick={()=>void signOut().then(()=>setRecovery(false))}>Cancel and sign out</button></section></main>;
   if (loggedIn) {
     return (
       <main className="min-h-screen bg-zinc-950 text-white">
@@ -773,7 +756,7 @@ function AccountsPage() {
 
               <button
                 onClick={signOut}
-                disabled={syncing || savingSavings}
+                disabled={syncing || savingSavings || budgetSaving}
                 className="border border-zinc-700 px-4 py-2 rounded-xl hover:bg-zinc-800"
               >
                 Sign out
@@ -807,7 +790,7 @@ function AccountsPage() {
         `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
       );
     }}
-    disabled={syncing || savingSavings}
+    disabled={syncing || savingSavings || budgetSaving}
     className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
   >
     ← Previous
@@ -821,7 +804,7 @@ function AccountsPage() {
         `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
       );
     }}
-    disabled={syncing || savingSavings}
+    disabled={syncing || savingSavings || budgetSaving}
     className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
   >
     Next →
@@ -829,7 +812,7 @@ function AccountsPage() {
 
   <button
     onClick={() => void loadData()}
-    disabled={dataLoading || syncing || savingSavings}
+    disabled={dataLoading || syncing || savingSavings || budgetSaving}
     className="rounded-lg border border-zinc-700 p-2 disabled:opacity-50"
   >
     Refresh
@@ -841,14 +824,14 @@ function AccountsPage() {
 
           {dataReady && section === "transactions" && TransactionsPage()}
 
-          {dataReady && section === "budget" && <BudgetPage summary={summary} editMonthlyBudget={editMonthlyBudget} editDefaultBudget={editDefaultBudget} />}
+          {dataReady && section === "budget" && <BudgetPage key={userId+":"+month} month={month} defaults={defaults} summary={summary} editMonthlyBudget={editMonthlyBudget} editDefaultBudget={editDefaultBudget} />}
 {dataReady && section === "savings" && savingsPlan && <SavingsPlanner key={userId + ":" + month} plan={savingsPlan} saving={savingSavings} onUpdate={updateSavingsTarget} onViewBudget={() => setSection("budget")} />}
 
-          {dataReady && section === "coach" && userId && <BudgetCoach key={userId + ":" + month} month={month} userId={userId} supabase={supabase} />}
+          {dataReady && section === "coach" && userId && <BudgetCoach key={userId + ":" + month} month={month} userId={userId} supabase={supabase} onApplied={async()=>{setMessage("Approved change applied. Refreshing your budget.");await loadData();}} />}
 
           {dataReady && section === "accounts" && AccountsPage()}
 
-          {section === "settings" && ComingSoon({ title: "Settings" })}
+          {section === "settings" && userId && <SettingsPage key={userId} supabase={supabase} userId={userId} categories={categories}/> }
         </div>
       </main>
     );
@@ -891,6 +874,13 @@ function AccountsPage() {
           {loading ? "Signing in..." : "Sign in"}
         </button>
 
+        <button disabled={loading} className="block w-full text-green-700 py-3" onClick={async()=>{
+          if(!email.trim()){setMessage("Enter your email address first.");return;}
+          setLoading(true);
+          const redirectTo=nativeIOS()?"budgetlive://auth/recovery":window.location.origin+"/";
+          const {error}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo});
+          setLoading(false);setMessage(error?"Could not send a recovery link. Try again shortly.":"If an account exists, a recovery link has been sent. Open it on this device.");
+        }}>Forgot password?</button>
         {message && (
           <p className="text-red-600 text-sm mt-4 text-center">{message}</p>
         )}

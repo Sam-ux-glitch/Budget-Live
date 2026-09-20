@@ -1,41 +1,12 @@
 import type { summarizeBudget } from "../lib/budget";
-type Props = { summary: ReturnType<typeof summarizeBudget>; editMonthlyBudget: (name: string, amount: number) => Promise<void>; editDefaultBudget: (name: string, amount: number) => Promise<void>; };
-const money = (amount: number) => amount.toLocaleString(undefined, {style: "currency", currency: "USD"});
-export default function BudgetPage({summary, editMonthlyBudget, editDefaultBudget}: Props) {
-    return <>
-      <h2 className="text-3xl font-bold mb-2">Budget</h2>
-
-      <p className="text-zinc-400 mb-6">Categorized spending includes pending purchases and subtracts refunds and credits. Transfers, excluded transactions, and removed transactions do not count. Past months use your current category limits.</p>
-      <div className="grid gap-4 md:grid-cols-3 mb-6">
-        <div className="rounded-2xl bg-zinc-900 p-5">Budgeted<p className="text-2xl font-bold">{money(summary.budget)}</p></div>
-        <div className="rounded-2xl bg-zinc-900 p-5">Spent<p className="text-2xl font-bold">{money(summary.spent)}</p></div>
-        <div className="rounded-2xl bg-zinc-900 p-5">Remaining<p className="text-2xl font-bold">{money(summary.remaining)}</p></div>
-      </div>
-      {summary.rows.length === 0 && <p>No active budget categories yet.</p>}
-      <div className="grid gap-4 md:grid-cols-2">
-        {summary.rows.map(category => <div key={category.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
-          <h3 className="font-semibold text-lg">{category.name}</h3>
-          <p className="text-zinc-400 text-sm capitalize">{category.category_type}</p>
-          <button
-  onClick={() => { void editMonthlyBudget(category.name, category.limit); }}
-  className="mt-2 text-sm text-green-400 hover:text-green-300"
->
-  Edit budget
-</button>
-<button
-  onClick={() => { void editDefaultBudget(category.name, category.limit); }}
-  className="mt-2 ml-4 text-sm text-blue-400 hover:text-blue-300"
->
-  Change default
-</button>
-
-          <dl className="grid grid-cols-3 gap-3 mt-4">
-            <div><dt className="text-zinc-400 text-sm">Budgeted</dt><dd>{money(category.limit)}</dd></div>
-            <div><dt className="text-zinc-400 text-sm">Spent</dt><dd>{money(category.spent)}</dd></div>
-            <div><dt className="text-zinc-400 text-sm">Remaining</dt><dd className={category.remaining < 0 ? "text-red-400" : "text-green-400"}>{money(category.remaining)}</dd></div>
-          </dl>
-          {category.remaining < 0 && <p className="text-red-400 text-sm mt-3">Over budget by {money(-category.remaining)}</p>}
-        </div>)}
-      </div>
-    </>;
-  }
+import AmountEditor from './AmountEditor';
+type Props = {summary: ReturnType<typeof summarizeBudget>; month: string; defaults: Record<string,number>; editMonthlyBudget:(name:string,amount:number)=>Promise<void>; editDefaultBudget:(name:string,amount:number)=>Promise<void>};
+const money=(n:number)=>n.toLocaleString(undefined,{style:'currency',currency:'USD'});
+export default function BudgetPage({summary,month,defaults,editMonthlyBudget,editDefaultBudget}:Props){return <>
+<h2 className="text-3xl font-bold mb-2">Budget</h2><p className="text-zinc-400 mb-6">Tap a budget amount to change {month} only. Change default sets the baseline starting next month and preserves monthly overrides. Spending includes pending purchases and refunds; transfers and excluded or removed transactions do not count.</p>
+<div className="grid gap-4 md:grid-cols-3 mb-6">{[['Budgeted',summary.budget],['Spent',summary.spent],['Remaining',summary.remaining]].map(([name,n])=><div key={name} className="rounded-2xl bg-zinc-900 p-5">{name}<p className="text-2xl font-bold">{money(Number(n))}</p></div>)}</div>
+{!summary.rows.length&&<p>No active budget categories yet.</p>}
+<div className="grid gap-4 md:grid-cols-2">{summary.rows.map(c=><div key={c.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5"><h3 className="font-semibold text-lg">{c.name}</h3><p className="text-zinc-400 text-sm capitalize">{c.category_type}</p>
+<dl className="grid grid-cols-3 gap-3 mt-4"><div><dt className="text-zinc-400 text-sm">Budgeted</dt><dd><AmountEditor amount={c.limit} label={'Edit '+c.name+' budget for '+month} onSave={n=>editMonthlyBudget(c.name,n)} explanation={'Changes '+month+' only.'}/></dd></div><div><dt className="text-zinc-400 text-sm">Spent</dt><dd className="py-2">{money(c.spent)}</dd></div><div><dt className="text-zinc-400 text-sm">Remaining</dt><dd className={'py-2 '+(c.remaining<0?'text-red-400':'text-green-400')}>{money(c.remaining)}</dd></div></dl>
+<AmountEditor amount={defaults[c.id]??c.limit} label={'Change '+c.name+' default budget'} buttonLabel={'Change default ('+money(defaults[c.id]??c.limit)+')'} onSave={n=>editDefaultBudget(c.name,n)} explanation="Starts next calendar month. Existing explicit monthly overrides and past months are preserved."/>
+{c.remaining<0&&<p className="text-red-400 text-sm mt-3">Over budget by {money(-c.remaining)}</p>}</div>)}</div></>}
