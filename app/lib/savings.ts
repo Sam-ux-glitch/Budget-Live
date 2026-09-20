@@ -1,4 +1,4 @@
-import type { summarizeBudget } from "./budget";
+import type { summarizeBudget } from "./budget.ts";
 
 type Amount = number | string;
 export type SavingsInputs = {

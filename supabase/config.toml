@@ -1,2 +1,5 @@
 [functions.plaid-sync-transactions]
 verify_jwt = true
+
+[functions.ai-budget-chat]
+verify_jwt = true

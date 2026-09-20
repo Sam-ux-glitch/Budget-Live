@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test": "node --experimental-transform-types --test tests/*.test.mjs supabase/functions/plaid-sync-transactions/core.test.ts",
     "typecheck": "tsc --noEmit",
-    "test:browser": "node tests/budget.browser.mjs && node tests/savings.browser.mjs"
+    "test:browser": "node tests/budget.browser.mjs && node tests/savings.browser.mjs && node tests/chat.browser.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

@@ -5,6 +5,7 @@ import { currentMonth, monthBounds, summarizeBudget, fetchAllPages, type BudgetC
 import { buildSavingsPlan, type SavingsInputs } from "./lib/savings";
 import BudgetPage from "./components/BudgetPage";
 import SavingsPlanner from "./components/SavingsPlanner";
+import BudgetCoach from "./components/BudgetCoach";
 import { createClient } from "@supabase/supabase-js";
 import { usePlaidLink } from "react-plaid-link";
 
@@ -31,6 +32,7 @@ type Section =
   | "transactions"
   | "budget"
   | "savings"
+  | "coach"
   | "accounts"
   | "settings";
 
@@ -280,6 +282,7 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
       { id: "transactions", label: "Transactions" },
       { id: "budget", label: "Budget" },
       { id: "savings", label: "Savings" },
+      { id: "coach", label: "AI Coach" },
       { id: "accounts", label: "Accounts" },
       { id: "settings", label: "Settings" },
     ];
@@ -840,6 +843,8 @@ function AccountsPage() {
 
           {dataReady && section === "budget" && <BudgetPage summary={summary} editMonthlyBudget={editMonthlyBudget} editDefaultBudget={editDefaultBudget} />}
 {dataReady && section === "savings" && savingsPlan && <SavingsPlanner key={userId + ":" + month} plan={savingsPlan} saving={savingSavings} onUpdate={updateSavingsTarget} onViewBudget={() => setSection("budget")} />}
+
+          {dataReady && section === "coach" && userId && <BudgetCoach key={userId + ":" + month} month={month} userId={userId} supabase={supabase} />}
 
           {dataReady && section === "accounts" && AccountsPage()}
 
