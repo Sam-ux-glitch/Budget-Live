@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { currentMonth, monthBounds, summarizeBudget, fetchAllPages, type BudgetCategory, type BudgetTransaction } from "./lib/budget";
+import { buildSavingsPlan, type SavingsInputs } from "./lib/savings";
+import BudgetPage from "./components/BudgetPage";
+import SavingsPlanner from "./components/SavingsPlanner";
 import { createClient } from "@supabase/supabase-js";
 import { usePlaidLink } from "react-plaid-link";
 
@@ -49,18 +52,13 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const syncInProgress = useRef(false);
   const [categories, setCategories] = useState<BudgetCategory[]>([]);
- const [cashflow, setCashflow] = useState<{
-  expected_income: number;
-  projected_surplus: number;
-  monthly_savings_goal: number;
-  paycheck_count: number;
-} | null>(null);
+  const [cashflow, setCashflow] = useState<SavingsInputs | null>(null);
+  const [savingSavings, setSavingSavings] = useState(false);
+  const savingsWrite = useRef(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [section, setSection] = useState<Section>("dashboard");
-  const [editingSavingsTarget, setEditingSavingsTarget] = useState(false);
-const [savingsTargetInput, setSavingsTargetInput] = useState("");
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -73,6 +71,7 @@ const [savingsTargetInput, setSavingsTargetInput] = useState("");
         setLinkToken(null);
         setMessage("");
         setCategories([]);
+        setCashflow(null);
         setMonthlyTransactions([]);
         setTransactions([]);
         setBankConnections([]);
@@ -142,6 +141,7 @@ supabase.rpc("expected_paychecks_for_month", {
   .eq("month", `${month}-01`)
   .maybeSingle(),
   ]);
+      if (monthBudgets.error) throw monthBudgets.error;
       if (recent.error) throw recent.error;
       if (connections.error) throw connections.error;
       if (cashflowData.error) throw cashflowData.error;
@@ -161,22 +161,17 @@ const effectiveCategories = categoryData.map((category) => ({
   monthly_limit:
     monthlyOverrides.get(category.id) ?? category.monthly_limit,
 }));
-    summarizeBudget(effectiveCategories, monthlyData, month);
+      const savingsInputs: SavingsInputs = {
+        month,
+        expectedIncome: cashflowData.data?.expected_income ?? null,
+        paycheckCount: paycheckData.data?.length ?? 0,
+        savingsPerPaycheck: settingsData.data?.savings_per_paycheck ?? null,
+        monthlyOverride: savingsOverrideData.data?.savings_target_override ?? null,
+      };
+      buildSavingsPlan(savingsInputs, summarizeBudget(effectiveCategories, monthlyData, month));
       if (version !== requestVersion.current) return false;
-     setCategories(effectiveCategories);
-  setCashflow(
-  cashflowData.data
-    ? {
-        ...cashflowData.data,
-        paycheck_count: paycheckData.data?.length ?? 0,
-monthly_savings_goal:
-  savingsOverrideData.data?.savings_target_override != null
-    ? Number(savingsOverrideData.data.savings_target_override)
-    : (paycheckData.data?.length ?? 0) *
-      Number(settingsData.data?.savings_per_paycheck ?? 1750),
-      }
-    : null
-);
+      setCategories(effectiveCategories);
+      setCashflow(savingsInputs);
       setMonthlyTransactions(monthlyData);
       setTransactions((recent.data ?? []) as Transaction[]);
       setBankConnections(connections.data ?? []);
@@ -234,6 +229,7 @@ async function createPlaidLinkToken() {
     setLoadedScope("");
     setLinkToken(null);
     setCategories([]);
+        setCashflow(null);
     setTransactions([]);
     setEmail("");
     setPassword("");
@@ -274,6 +270,7 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
   },
 });
   const summary = summarizeBudget(categories, monthlyTransactions, month);
+  const savingsPlan = cashflow ? buildSavingsPlan(cashflow, summary) : null;
   const totalBudget = summary.budget;
   const dataReady = loadedScope === userId + ":" + month && !dataLoading && !dataError;
   const money = (amount: number) => amount.toLocaleString(undefined, { style: "currency", currency: "USD" });
@@ -293,6 +290,7 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
           <button
             key={item.id}
             onClick={() => setSection(item.id)}
+            disabled={savingSavings}
             className={`px-4 py-2 rounded-xl whitespace-nowrap ${
               section === item.id
                 ? "bg-green-500 text-white"
@@ -473,11 +471,11 @@ target_category: category.id,
             </p>
           </div>
         </div>
-        {cashflow && (
+        {savingsPlan && (
   <div className="grid gap-4 md:grid-cols-4 mb-8">
     <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
       <p className="text-zinc-400 text-sm">Expected Income</p>
-      <p className="text-2xl font-bold">{money(cashflow.expected_income)}</p>
+      <p className="text-2xl font-bold">{savingsPlan.expectedIncome === null ? "Not available" : money(savingsPlan.expectedIncome)}</p>
     </div>
 
     <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
@@ -487,12 +485,12 @@ target_category: category.id,
 
     <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
       <p className="text-zinc-400 text-sm">Projected Left Over</p>
-      <p className="text-2xl font-bold">{money(cashflow.projected_surplus)}</p>
+      <p className="text-2xl font-bold">{savingsPlan.projectedSurplus === null ? "Not available" : money(savingsPlan.projectedSurplus)}</p>
     </div>
 
     <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
       <p className="text-zinc-400 text-sm">Savings Goal</p>
-      <p className="text-2xl font-bold">{money(cashflow.monthly_savings_goal)}</p>
+      <p className="text-2xl font-bold">{savingsPlan.target === null ? "Not configured" : money(savingsPlan.target)}</p>
     </div>
   </div>
 )}
@@ -560,74 +558,34 @@ target_category: category.id,
       </>
     );
   }
-function SavingsPage() {
-  async function saveSavingsTarget() {
-  const newAmount = Number(savingsTargetInput);
-
-  if (!Number.isFinite(newAmount) || newAmount < 0) {
-    window.alert("Please enter a valid savings amount.");
-    return;
+  async function updateSavingsTarget(amount: number | null) {
+    if (!userId || currentUser.current !== userId || savingsWrite.current || !dataReady) {
+      throw new Error("Please wait for your budget to load and try again.");
+    }
+    const version = requestVersion.current;
+    savingsWrite.current = true;
+    setSavingSavings(true);
+    try {
+      if (amount === null) {
+        const { data, error } = await supabase.from("monthly_savings_overrides")
+          .delete().eq("user_id", userId).eq("month", month + "-01")
+          .select("month");
+        if (error) throw new Error("Could not reset your target: " + error.message);
+        if (!data?.length) throw new Error("Reset was not confirmed. Refresh and retry; if it persists, check the savings reset database policy.");
+      } else {
+        const { error } = await supabase.from("monthly_savings_overrides").upsert({
+          user_id: userId, month: month + "-01", savings_target_override: amount,
+        }, {onConflict: "user_id,month"});
+        if (error) throw new Error("Could not update your target: " + error.message);
+      }
+      // A late response must never reload a previous month or another user's data.
+      if (currentUser.current === userId && requestVersion.current === version) await loadData();
+    } finally {
+      savingsWrite.current = false;
+      setSavingSavings(false);
+    }
   }
-
-  const { error } = await supabase
-    .from("monthly_savings_overrides")
-    .upsert(
-      {
-        user_id: userId,
-        month: `${month}-01`,
-        savings_target_override: newAmount,
-      },
-      { onConflict: "user_id,month" }
-    );
-
-  if (error) {
-    window.alert(`Could not update savings target: ${error.message}`);
-    return;
-  }
-
-  setEditingSavingsTarget(false);
-  await loadData();
-}
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold text-zinc-100">Savings</h2>
-        <p className="text-zinc-400 mt-1">
-          Manage your savings target and monthly adjustments.
-        </p>
-      </div>
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-  <p className="text-sm text-zinc-400">Savings target for {month}</p>
-{editingSavingsTarget ? (
-  <input
-    type="number"
-    step="0.01"
-    value={savingsTargetInput}
-    onChange={(e) => setSavingsTargetInput(e.target.value)}
-    onBlur={() => void saveSavingsTarget()}
-    className="mt-2 w-48 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-3xl font-semibold text-zinc-100"
-    autoFocus
-  />
-) : (
-  <button
-    type="button"
-    onClick={() => {
-      setSavingsTargetInput(String(cashflow?.monthly_savings_goal ?? 0));
-      setEditingSavingsTarget(true);
-    }}
-    className="mt-2 text-3xl font-semibold text-zinc-100 hover:text-zinc-300"
-    title="Click to edit this month's savings target"
-  >
-    {money(cashflow?.monthly_savings_goal ?? 0)}
-  </button>
-)}
-</div>
-    </div>
-  );
-}
-  function BudgetPage() {
-    async function editMonthlyBudget(categoryName: string, currentAmount: number) {
+  async function editMonthlyBudget(categoryName: string, currentAmount: number) {
   const entered = window.prompt(
     `Enter the budget for ${categoryName} for ${month}:`,
     String(currentAmount)
@@ -692,43 +650,6 @@ async function editDefaultBudget(categoryName: string, currentAmount: number) {
 
   await loadData();
 }
-    return <>
-      <h2 className="text-3xl font-bold mb-2">Budget</h2>
-      
-      <p className="text-zinc-400 mb-6">Categorized spending includes pending purchases and subtracts refunds and credits. Transfers, excluded transactions, and removed transactions do not count. Past months use your current category limits.</p>
-      <div className="grid gap-4 md:grid-cols-3 mb-6">
-        <div className="rounded-2xl bg-zinc-900 p-5">Budgeted<p className="text-2xl font-bold">{money(summary.budget)}</p></div>
-        <div className="rounded-2xl bg-zinc-900 p-5">Spent<p className="text-2xl font-bold">{money(summary.spent)}</p></div>
-        <div className="rounded-2xl bg-zinc-900 p-5">Remaining<p className="text-2xl font-bold">{money(summary.remaining)}</p></div>
-      </div>
-      {summary.rows.length === 0 && <p>No active budget categories yet.</p>}
-      <div className="grid gap-4 md:grid-cols-2">
-        {summary.rows.map(category => <div key={category.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
-          <h3 className="font-semibold text-lg">{category.name}</h3>
-          <p className="text-zinc-400 text-sm capitalize">{category.category_type}</p>
-          <button
-  onClick={() => editMonthlyBudget(category.name, category.limit)}
-  className="mt-2 text-sm text-green-400 hover:text-green-300"
->
-  Edit budget
-</button>
-<button
-  onClick={() => editDefaultBudget(category.name, category.limit)}
-  className="mt-2 ml-4 text-sm text-blue-400 hover:text-blue-300"
->
-  Change default
-</button>
-
-          <dl className="grid grid-cols-3 gap-3 mt-4">
-            <div><dt className="text-zinc-400 text-sm">Budgeted</dt><dd>{money(category.limit)}</dd></div>
-            <div><dt className="text-zinc-400 text-sm">Spent</dt><dd>{money(category.spent)}</dd></div>
-            <div><dt className="text-zinc-400 text-sm">Remaining</dt><dd className={category.remaining < 0 ? "text-red-400" : "text-green-400"}>{money(category.remaining)}</dd></div>
-          </dl>
-          {category.remaining < 0 && <p className="text-red-400 text-sm mt-3">Over budget by {money(-category.remaining)}</p>}
-        </div>)}
-      </div>
-    </>;
-  }
 async function syncTransactions() {
   if (syncInProgress.current || !userId) return;
   const sameUser = () => currentUser.current === userId;
@@ -806,7 +727,7 @@ function AccountsPage() {
   <>
     <button
       onClick={syncTransactions}
-      disabled={syncing}
+      disabled={syncing || savingSavings}
       className="ml-3 bg-zinc-700 hover:bg-zinc-600 text-white font-semibold px-6 py-3 rounded-xl"
     >
       {syncing ? "Syncing..." : "Sync Transactions"}
@@ -849,7 +770,7 @@ function AccountsPage() {
 
               <button
                 onClick={signOut}
-                disabled={syncing}
+                disabled={syncing || savingSavings}
                 className="border border-zinc-700 px-4 py-2 rounded-xl hover:bg-zinc-800"
               >
                 Sign out
@@ -883,7 +804,7 @@ function AccountsPage() {
         `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
       );
     }}
-    disabled={syncing}
+    disabled={syncing || savingSavings}
     className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
   >
     ← Previous
@@ -897,7 +818,7 @@ function AccountsPage() {
         `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
       );
     }}
-    disabled={syncing}
+    disabled={syncing || savingSavings}
     className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
   >
     Next →
@@ -905,7 +826,7 @@ function AccountsPage() {
 
   <button
     onClick={() => void loadData()}
-    disabled={dataLoading || syncing}
+    disabled={dataLoading || syncing || savingSavings}
     className="rounded-lg border border-zinc-700 p-2 disabled:opacity-50"
   >
     Refresh
@@ -917,8 +838,8 @@ function AccountsPage() {
 
           {dataReady && section === "transactions" && TransactionsPage()}
 
-          {dataReady && section === "budget" && BudgetPage()}
-{dataReady && section === "savings" && SavingsPage()}
+          {dataReady && section === "budget" && <BudgetPage summary={summary} editMonthlyBudget={editMonthlyBudget} editDefaultBudget={editDefaultBudget} />}
+{dataReady && section === "savings" && savingsPlan && <SavingsPlanner key={userId + ":" + month} plan={savingsPlan} saving={savingSavings} onUpdate={updateSavingsTarget} onViewBudget={() => setSection("budget")} />}
 
           {dataReady && section === "accounts" && AccountsPage()}
 

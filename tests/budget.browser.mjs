@@ -32,8 +32,17 @@ await page.route('https://**.supabase.co/**',async route=>{
     }
     return send({error:'Unexpected function'},400);
   }
+  if(url.pathname.startsWith('/rest/v1/rpc/')) {
+    const name=url.pathname.split('/').pop();
+    assert.ok(['create_month_budget','create_month_income','expected_paychecks_for_month'].includes(name));
+    return send(name==='expected_paychecks_for_month'?[{},{}]:null);
+  }
   if(url.pathname.startsWith('/rest/v1/')) {
     if(url.searchParams.get('user_id')!=='eq.'+userId) {queryErrors.push('Missing explicit owner filter');return send({message:'Missing owner'},403);}
+    if(url.pathname.endsWith('/budget_months')) return send([]);
+    if(url.pathname.endsWith('/monthly_savings_summary')) return send({expected_income:5000});
+    if(url.pathname.endsWith('/settings')) return send({savings_per_paycheck:600});
+    if(url.pathname.endsWith('/monthly_savings_overrides')) return send(null);
     const offset=Number(url.searchParams.get('offset')||0);
     const limit=Number(url.searchParams.get('limit')||500);
     if(url.pathname.endsWith('/budget_categories')) return send(categories.slice(offset,offset+limit));
@@ -51,22 +60,34 @@ await page.route('https://**.supabase.co/**',async route=>{
   }
   return send({message:'Unexpected fixture request'},400);
 });
+let displayedMonth = new Date().getFullYear()*12 + new Date().getMonth();
+async function selectMonth(month) {
+  const [year,value]=month.split('-').map(Number);
+  const target=year*12+value-1;
+  while(displayedMonth!==target) {
+    const direction=target>displayedMonth?1:-1;
+    await page.getByRole('button',{name:direction===1?'Next →':'← Previous',exact:true}).click();
+    displayedMonth+=direction;
+  }
+  const date=new Date(year,value-1,2);
+  await expect(page.getByText('Budget month: '+date.toLocaleDateString('en-US',{month:'long',year:'numeric'}),{exact:true})).toBeVisible();
+}
 try {
   await page.goto(process.env.BUDGET_TEST_URL||'http://localhost:3000');
   await page.getByPlaceholder('Email address').fill('fixture@example.com');
   await page.getByPlaceholder('Password').fill('test-only-not-a-real-password');
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await page.getByLabel('Budget month').fill('2026-09');
+  await selectMonth('2026-09');
   await page.getByRole('button',{name:'Budget',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Budget',exact:true})).toBeVisible();
   await expect(page.getByText('$1,265.00',{exact:true})).toHaveCount(2);
   await expect(page.getByText('Over budget by $265.00')).toBeVisible();
   await expect(page.getByText(/1 transactions totaling \$30.00/)).toBeVisible();
   console.log('PASS: paginated category totals, refund, exclusions, overspending, unassigned warning');
-  await page.getByLabel('Budget month').fill('2026-08');
+  await selectMonth('2026-08');
   await expect(page.getByText('$1,265.00',{exact:true})).toHaveCount(0);
   await expect(page.getByText('$0.00',{exact:true})).toHaveCount(3);
-  await page.getByLabel('Budget month').fill('2026-09');
+  await selectMonth('2026-09');
   await expect(page.getByText('$1,265.00',{exact:true})).toHaveCount(2);
   console.log('PASS: month switching does not display prior-month totals');
   failPage=true;
