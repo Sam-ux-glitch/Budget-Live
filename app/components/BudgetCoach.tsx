@@ -50,7 +50,7 @@ export default function BudgetCoach({month,userId,supabase,onApplied}:{month:str
     }
   }
   function clear() { pending.current?.abort();pending.current=null;setBusy(false);setMessages([]);setLatest(null);setError('');setDraft('');input.current?.focus(); }
- return <section className="max-w-3xl mx-auto space-y-5 pb-28" aria-labelledby="coach-heading">
+return <section className="max-w-3xl mx-auto space-y-5 pb-36" aria-labelledby="coach-heading">
     <div className="flex items-start justify-between gap-3">
       <div><p className="text-green-400 text-xs font-semibold tracking-widest">YOUR BUDGET, IN CONVERSATION</p><h2 id="coach-heading" className="text-2xl font-bold mt-2">AI Coach</h2><p className="text-zinc-400 mt-2 text-sm">Plan a change, protect your savings, and understand {month}.</p></div>
       <button disabled={deciding} onClick={clear} className="shrink-0 rounded-xl border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800">New chat</button>
@@ -66,16 +66,43 @@ export default function BudgetCoach({month,userId,supabase,onApplied}:{month:str
     {latest?.proposal&&<section aria-label="Proposed app changes" className="border border-amber-700 rounded-xl p-4 space-y-3"><h3 className="font-semibold">Review exact changes</h3><ul className="list-disc pl-5">{latest.proposal.actions.map((a,i)=><li key={i}>{actionDescription(a,latest.proposal!.before_values[i],latest.month)}</li>)}</ul><p className="text-xs text-zinc-400">Expires {new Date(latest.proposal.expires_at).toLocaleTimeString()}. New budget or spending data invalidates this proposal.</p>{!decision&&<div className="flex gap-3">{[true,false].map(approve=><button key={String(approve)} disabled={deciding||busy} className="border border-zinc-600 rounded-lg px-4 py-2" onClick={async()=>{if(decisionLock.current)return;decisionLock.current=true;setDeciding(true);try{const {data,error}=await supabase.rpc('decide_coach_proposal',{proposal_id:latest.proposal!.id,approve});if(error||data?.status!==(approve?'approved':'rejected')){setError('Change was not confirmed. Refresh and request a new proposal; it may be stale.');setDecision('Not applied or unconfirmed. Refresh canonical data before retrying.');return;}setDecision(approve?'Approved and applied.':'Rejected. Nothing changed.');if(approve)await onApplied();}catch{setError('Could not confirm the change. Refresh your data before retrying.');}finally{decisionLock.current=false;setDeciding(false);}}}>{deciding?'Please wait…':approve?'Approve changes':'Reject'}</button>)}</div>}{decision&&<p role="status">{decision}</p>}</section>}
     <div ref={end}/>
     {error && <p role="alert" className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-red-200 text-sm">{error} Your question is below so you can retry.</p>}
-    <form
+   <form
   onSubmit={event => {
     event.preventDefault();
     void send();
   }}
-  className="sticky bottom-0 z-20 rounded-2xl border border-zinc-700 bg-zinc-900 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
+  className="sticky bottom-0 z-30 -mx-2 rounded-2xl border border-zinc-700 bg-zinc-900/95 p-3 shadow-2xl backdrop-blur pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:mx-0 sm:p-4"
 >
-      <label htmlFor="coach-question" className="text-sm font-medium">Ask about your budget</label><textarea ref={input} id="coach-question" value={draft} onChange={event=>setDraft(event.target.value)} disabled={busy} maxLength={2000} rows={3} placeholder="Can I afford this without missing my savings target?" className="w-full resize-y bg-transparent py-3 text-sm outline-none focus:ring-2 focus:ring-green-600 rounded-lg disabled:opacity-50"/>
-      <div className="flex items-center justify-between gap-3"><span className="text-xs text-zinc-500">{draft.length}/2,000</span><button disabled={busy || deciding || !draft.trim()} className="rounded-xl bg-green-500 px-5 py-2 font-semibold text-zinc-950 hover:bg-green-400 disabled:opacity-40">{busy?'Thinking…':'Send'}</button></div>
-    </form>
+  <label htmlFor="coach-question" className="text-sm font-medium">
+    Ask about your budget
+  </label>
+
+  <div className="mt-2 flex items-end gap-2">
+    <textarea
+      ref={input}
+      id="coach-question"
+      value={draft}
+      onChange={event => setDraft(event.target.value)}
+      disabled={busy}
+      maxLength={2000}
+      rows={2}
+      placeholder="Ask about this month’s budget..."
+      className="min-h-[52px] max-h-28 flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-green-600 disabled:opacity-50"
+    />
+
+    <button
+      type="submit"
+      disabled={busy || deciding || !draft.trim()}
+      className="shrink-0 rounded-xl bg-green-500 px-4 py-3 font-semibold text-zinc-950 hover:bg-green-400 disabled:opacity-40"
+    >
+      {busy ? "Thinking…" : "Send"}
+    </button>
+  </div>
+
+  <div className="mt-2 text-right text-xs text-zinc-500">
+    {draft.length}/2,000
+  </div>
+</form>
     <p className="text-xs text-zinc-500 leading-5">Your question, recent chat turns and a compact monthly summary are sent to OpenAI. Transaction details are included only for transaction questions, up to 12 recent rows. Chat is kept only in this page session and clears when you change month, refresh, leave this section, or sign out. Check suggestions before editing Budget or Savings.</p>
   </section>;
 }

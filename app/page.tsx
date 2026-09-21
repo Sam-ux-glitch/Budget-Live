@@ -335,13 +335,13 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
     ];
 
     return (
-      <div className="flex gap-2 overflow-x-auto pb-2">
+<div className="grid grid-cols-2 gap-2 sm:flex sm:overflow-x-auto pb-2">
         {items.map((item) => (
           <button
             key={item.id}
             onClick={() => setSection(item.id)}
             disabled={savingSavings}
-            className={`px-4 py-2 rounded-xl whitespace-nowrap ${
+className={`w-full px-3 py-2 rounded-xl text-sm whitespace-nowrap sm:w-auto sm:px-4 ${
               section === item.id
                 ? "bg-green-500 text-white"
                 : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800"
@@ -774,49 +774,55 @@ function AccountsPage() {
             </div>
           )}
 
-         <div className="flex flex-wrap items-center gap-3 mb-6">
-  <span className="font-medium">
-    Budget month: {new Date(`${month}-02`).toLocaleDateString("en-US", {
-      month: "long",
-      year: "numeric",
-    })}
-  </span>
+<div className="mb-6">
+  <div className="mb-3">
+    <p className="text-sm text-zinc-500">Budget month selection</p>
 
-  <button
-    onClick={() => {
-      const [year, monthNumber] = month.split("-").map(Number);
-      const date = new Date(year, monthNumber - 2, 1);
-      setMonth(
-        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
-      );
-    }}
-    disabled={syncing || savingSavings || budgetSaving}
-    className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
-  >
-    ← Previous
-  </button>
+    <p className="mt-1 font-medium">
+      {new Date(`${month}-02`).toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      })}
+    </p>
+  </div>
 
-  <button
-    onClick={() => {
-      const [year, monthNumber] = month.split("-").map(Number);
-      const date = new Date(year, monthNumber, 1);
-      setMonth(
-        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
-      );
-    }}
-    disabled={syncing || savingSavings || budgetSaving}
-    className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
-  >
-    Next →
-  </button>
+  <div className="flex flex-wrap gap-3">
+    <button
+      onClick={() => {
+        const [year, monthNumber] = month.split("-").map(Number);
+        const date = new Date(year, monthNumber - 2, 1);
+        setMonth(
+          `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+        );
+      }}
+      disabled={syncing || savingSavings || budgetSaving}
+      className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
+    >
+      ← Previous
+    </button>
 
-  <button
-    onClick={() => void loadData()}
-    disabled={dataLoading || syncing || savingSavings || budgetSaving}
-    className="rounded-lg border border-zinc-700 p-2 disabled:opacity-50"
-  >
-    Refresh
-  </button>
+    <button
+      onClick={() => {
+        const [year, monthNumber] = month.split("-").map(Number);
+        const date = new Date(year, monthNumber, 1);
+        setMonth(
+          `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+        );
+      }}
+      disabled={syncing || savingSavings || budgetSaving}
+      className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
+    >
+      Next →
+    </button>
+
+    <button
+      onClick={() => void loadData()}
+      disabled={dataLoading || syncing || savingSavings || budgetSaving}
+      className="rounded-lg border border-zinc-700 px-3 py-2 disabled:opacity-50"
+    >
+      Refresh
+    </button>
+  </div>
 </div>
           {dataError ? <p role="alert" className="text-red-300 mb-6">{dataError}</p> : !dataReady && <p role="status">Loading your budget...</p>}
           {dataReady && (section === "dashboard" || section === "budget") && summary.unassignedCount > 0 && <p className="rounded-xl border border-amber-800 p-4 mb-6 text-amber-200">{summary.unassignedCount} transactions totaling {money(summary.unassigned)} have no active budget category. These are not included in categorized spending or remaining amounts.</p>}
