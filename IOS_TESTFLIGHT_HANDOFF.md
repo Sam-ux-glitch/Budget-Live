@@ -1,5 +1,7 @@
 # Budget Live — private iPhone testing handoff
 
+> Bank/security status updated 2026-09-21: see [Real-bank readiness handoff](REAL_BANK_READINESS_HANDOFF.md) and [native Plaid setup](docs/PLAID_UNIVERSAL_LINK_SETUP.md). Real-bank use remains blocked pending the listed acceptance/setup steps.
+
 Date: 2026-09-20. Branch: codex/savings-v2. Starting checkpoint: ab7c8d7393886595f1e52b4af8857f85ad4828f1 (Savings V2 and read-only Coach were working). Existing PR: https://github.com/Sam-ux-glitch/Budget-Live/pull/1, targeting main; do not merge without authorization.
 
 ## Delivery status
