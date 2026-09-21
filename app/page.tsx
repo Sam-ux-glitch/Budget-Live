@@ -482,7 +482,11 @@ target_category: category.id,
       <>
         <div className="grid md:grid-cols-3 gap-4 mb-8">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-            <p className="text-zinc-400 text-sm">Budget for Selected Month</p>
+<p className="text-zinc-400 text-sm">
+  Budget for {new Date(`${month}-02`).toLocaleDateString("en-US", {
+    month: "long",
+  })}
+</p>
 
             <p className="text-3xl font-bold mt-2">
               $
@@ -522,20 +526,10 @@ target_category: category.id,
           </div>
         </div>
         {savingsPlan && (
-  <div className="grid gap-4 md:grid-cols-4 mb-8">
+<div className="grid gap-4 md:grid-cols-2 mb-8">
     <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
       <p className="text-zinc-400 text-sm">Expected Income</p>
       <p className="text-2xl font-bold">{savingsPlan.expectedIncome === null ? "Not available" : money(savingsPlan.expectedIncome)}</p>
-    </div>
-
-    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
-      <p className="text-zinc-400 text-sm">Monthly Budget</p>
-      <p className="text-2xl font-bold">{money(summary.budget)}</p>
-    </div>
-
-    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
-      <p className="text-zinc-400 text-sm">Projected Left Over</p>
-      <p className="text-2xl font-bold">{savingsPlan.projectedSurplus === null ? "Not available" : money(savingsPlan.projectedSurplus)}</p>
     </div>
 
     <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5">
