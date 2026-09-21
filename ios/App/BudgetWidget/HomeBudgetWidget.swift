@@ -52,7 +52,7 @@ struct HomeBudgetWidget: Widget {
             else { HomeBudgetView(entry: entry).padding(16) }
         }
         .configurationDisplayName("Budget Live · Monthly remaining")
-        .description("See how much is left in three selected budget categories. Choose categories inside Budget Live Settings.")
+  .description("See how much is left in up to four selected budget categories. Choose categories inside Budget Live Settings.")
         .supportedFamilies([.systemMedium, .systemLarge])
     }
 }

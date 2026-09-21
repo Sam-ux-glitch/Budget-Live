@@ -335,13 +335,13 @@ const { open: openPlaid, ready: plaidReady } = usePlaidLink({
     ];
 
     return (
-<div className="grid grid-cols-2 gap-2 sm:flex sm:overflow-x-auto pb-2">
+<div className="flex gap-2 overflow-x-auto pb-2">
         {items.map((item) => (
           <button
             key={item.id}
             onClick={() => setSection(item.id)}
             disabled={savingSavings}
-className={`w-full px-3 py-2 rounded-xl text-sm whitespace-nowrap sm:w-auto sm:px-4 ${
+className={`px-4 py-2 rounded-xl whitespace-nowrap ${
               section === item.id
                 ? "bg-green-500 text-white"
                 : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800"
