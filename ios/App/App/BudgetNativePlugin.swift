@@ -27,7 +27,7 @@ public class BudgetNativePlugin: CAPPlugin, CAPBridgedPlugin {
                 let data = try JSONSerialization.data(withJSONObject: object)
                 guard data.count < 8192 else { call.reject("Widget snapshot too large"); return }
                 let snapshot = try JSONDecoder().decode(BudgetSnapshot.self, from: data)
-                guard snapshot.isCurrent(at: Date()), snapshot.categories.count <= 3,
+                guard snapshot.isCurrent(at: Date()), snapshot.categories.count <= 4,
                     snapshot.categories.allSatisfy({ $0.name.count <= 100 && $0.budget.isFinite && $0.budget >= 0 && $0.spent.isFinite && $0.remaining.isFinite && abs(($0.budget - $0.spent) - $0.remaining) < 0.011 && $0.progress >= 0 && $0.progress <= 1 }) else { call.reject("Invalid widget summary"); return }
                 // Encode only the whitelist model; extra JS keys can never reach shared storage.
                 try JSONEncoder().encode(snapshot).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
