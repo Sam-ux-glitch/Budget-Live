@@ -1,4 +1,5 @@
 "use client";
+import {bankErrorMessage} from "./lib/bank-errors";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { currentMonth, monthBounds, summarizeBudget, fetchAllPages, type BudgetCategory, type BudgetTransaction } from "./lib/budget";
@@ -247,7 +248,8 @@ async function createPlaidLinkToken() {
 
   if (currentUser.current !== userId) return;
   if (error) {
-    setMessage(`Plaid error: ${error.message}`);
+    const message=await bankErrorMessage(error);
+    if(currentUser.current===userId)setMessage(message);
     return;
   }
 

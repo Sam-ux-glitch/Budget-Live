@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.116.0";
+import {plaidConfig} from '../_shared/plaid.ts';
 import { collectSync, SyncError, type SyncPage } from "./core.ts";
 const cors = { 'Access-Control-Allow-Origin':'*',
   'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type',
@@ -23,20 +24,16 @@ Deno.serve(async(req)=>{
       (body.connection_id!==undefined && (typeof body.connection_id!=='string' ||
       !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(body.connection_id)))) return reply({error:'Invalid connection'},400);
     const admin=createClient(url,service,{auth:{persistSession:false}});
-    let query=admin.from('bank_connections').select('id,plaid_item_id').eq('user_id',user.id).eq('status','active');
+    let query=admin.from('bank_connections').select('id,plaid_item_id,plaid_environment').eq('user_id',user.id).eq('status','active');
     if(body.connection_id) query=query.eq('id',body.connection_id);
     const {data:connections,error:connectionError}=await query;
     if(connectionError) throw new SyncError('DATABASE_ERROR');
     if(!connections?.length) return reply({error:'No active bank connection found'},404);
-    const clientId=Deno.env.get('PLAID_CLIENT_ID');
-    // Matches the existing Sandbox-only Link/exchange functions. Never guess an environment from a token.
-    const env=Deno.env.get('PLAID_ENV')??'sandbox';
-    if(!['sandbox','production'].includes(env))throw new SyncError('CONFIGURATION_ERROR');
-    const secret=env==='sandbox'?Deno.env.get('PLAID_SANDBOX_SECRET')||Deno.env.get('PLAID_SECRET'):Deno.env.get('PLAID_SECRET');
-    if(!clientId || !secret) throw new SyncError('CONFIGURATION_ERROR');
+    const {client_id:clientId,secret,baseUrl,environment}=plaidConfig(Deno.env.get);
     const results=[];
     for(const connection of connections) {
       try {
+        if(connection.plaid_environment!==environment)throw new SyncError('CONFIGURATION_ERROR');
         const {data:record,error:recordError}=await admin.from('plaid_private_tokens')
           .select('sync_cursor').eq('user_id',user.id).eq('plaid_item_id',connection.plaid_item_id).single();
         if(recordError || !record) throw new SyncError('CONNECTION_UNAVAILABLE');
@@ -44,7 +41,7 @@ Deno.serve(async(req)=>{
           {p_user_id:user.id,p_item_id:connection.plaid_item_id});
         if(tokenError || typeof accessToken!=='string') throw new SyncError('CONNECTION_UNAVAILABLE');
         const batch=await collectSync(record.sync_cursor,async(cursor)=>{
-          const response=await fetch('https://'+env+'.plaid.com/transactions/sync',{
+          const response=await fetch(baseUrl+'/transactions/sync',{
             method:'POST',headers:{'Content-Type':'application/json','Plaid-Version':'2020-09-14'},
             body:JSON.stringify({client_id:clientId,secret,access_token:accessToken,count:500,...(cursor?{cursor}:{})}),
             signal:AbortSignal.timeout(20000),

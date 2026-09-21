@@ -12,7 +12,8 @@
     "test:browser": "node tests/budget.browser.mjs && node tests/savings.browser.mjs && node tests/chat.browser.mjs && node tests/mobile.browser.mjs",
     "build:ios": "CAPACITOR_BUILD=1 next build",
     "ios:sync": "npm run build:ios && cap sync ios",
-    "ios:open": "cap open ios"
+    "ios:open": "cap open ios",
+    "check:edge": "deno check --config supabase/functions/deno.json supabase/functions/ai-budget-chat/index.ts supabase/functions/ai-categorize-transactions/index.ts supabase/functions/plaid-create-link-token/index.ts supabase/functions/plaid-disconnect/index.ts supabase/functions/plaid-exchange-token/index.ts supabase/functions/plaid-sync-transactions/index.ts"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.1",
@@ -33,10 +34,16 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "deno": "2.5.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
     "typescript": "^5",
     "xcode": "^3.0.1"
+  },
+  "overrides": {
+    "xcode": {
+      "uuid": "11.1.1"
+    }
   }
 }

@@ -70,7 +70,7 @@ async function selectMonth(month) {
     displayedMonth+=direction;
   }
   const date=new Date(year,value-1,2);
-  await expect(page.getByText('Budget month: '+date.toLocaleDateString('en-US',{month:'long',year:'numeric'}),{exact:true})).toBeVisible();
+  await expect(page.getByText(''+date.toLocaleDateString('en-US',{month:'long',year:'numeric'}),{exact:true})).toBeVisible();
 }
 try {
   await page.goto(process.env.BUDGET_TEST_URL||'http://localhost:3000');

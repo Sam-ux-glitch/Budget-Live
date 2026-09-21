@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Private signing and service-account material
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+service-account*.json
