@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {actionDescription,type CoachProposal} from '../lib/coach-actions';
 import type { ChatMessage } from '../lib/chat';
 type Reply = {proposal?:CoachProposal|null;proposalError?:string;answer:string;month:string;asOf:string;facts:{expectedIncome:number|null;target:number|null;plannedSpending:number;actualSpending:number;unassignedSpending:number;cautiousHeadroom:number|null}};
-const starters = ['Groceries are costing an extra $100 this week. Where can I take that money from?', 'I have an unexpected $300 dental expense this month. How should I adjust the budget?', 'I spent less than expected this month. How much extra can go to savings?'];
+
 const money = (value:number|null) => value === null ? 'Not available' : value.toLocaleString('en-US',{style:'currency',currency:'USD'});
 export default function BudgetCoach({month,userId,supabase,onApplied}:{month:string;userId:string;supabase:SupabaseClient;onApplied:()=>Promise<unknown>}) {
   const [messages,setMessages] = useState<ChatMessage[]>([]);
@@ -50,13 +50,13 @@ export default function BudgetCoach({month,userId,supabase,onApplied}:{month:str
     }
   }
   function clear() { pending.current?.abort();pending.current=null;setBusy(false);setMessages([]);setLatest(null);setError('');setDraft('');input.current?.focus(); }
-  return <section className="max-w-3xl mx-auto space-y-5" aria-labelledby="coach-heading">
+ return <section className="max-w-3xl mx-auto space-y-5 pb-28" aria-labelledby="coach-heading">
     <div className="flex items-start justify-between gap-3">
       <div><p className="text-green-400 text-xs font-semibold tracking-widest">YOUR BUDGET, IN CONVERSATION</p><h2 id="coach-heading" className="text-2xl font-bold mt-2">AI Coach</h2><p className="text-zinc-400 mt-2 text-sm">Plan a change, protect your savings, and understand {month}.</p></div>
       <button disabled={deciding} onClick={clear} className="shrink-0 rounded-xl border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800">New chat</button>
     </div>
     <p className="rounded-xl border border-green-900 bg-green-950/30 p-4 text-sm text-green-200">Chat never applies changes by itself. Review the exact proposal and choose Approve or Reject. Each answer checks this month’s app data; expected income is a forecast, not a bank balance.</p>
-    {!messages.length && <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"><h3 className="font-semibold">What would you like to work through?</h3><div className="grid gap-3 mt-4">{starters.map(question => <button key={question} disabled={busy} onClick={() => void send(question)} className="text-left rounded-xl border border-zinc-700 p-3 text-sm text-zinc-300 hover:border-green-600 hover:text-white disabled:opacity-50">{question}</button>)}</div></div>}
+
     <div role="log" aria-label="Budget conversation" aria-live="polite" aria-relevant="additions" className="space-y-4">
       {messages.map((message,index) => <article key={index} className={'rounded-2xl border p-4 sm:p-5 '+(message.role==='user'?'border-zinc-700 bg-zinc-800 sm:ml-10':'border-zinc-800 bg-zinc-900')}><p className="text-xs font-semibold mb-2 text-green-400">{message.role==='user'?'You':'AI Coach · suggestion'}</p><p className="whitespace-pre-wrap wrap-anywhere text-sm leading-7">{message.content}</p></article>)}
     </div>
@@ -66,7 +66,13 @@ export default function BudgetCoach({month,userId,supabase,onApplied}:{month:str
     {latest?.proposal&&<section aria-label="Proposed app changes" className="border border-amber-700 rounded-xl p-4 space-y-3"><h3 className="font-semibold">Review exact changes</h3><ul className="list-disc pl-5">{latest.proposal.actions.map((a,i)=><li key={i}>{actionDescription(a,latest.proposal!.before_values[i],latest.month)}</li>)}</ul><p className="text-xs text-zinc-400">Expires {new Date(latest.proposal.expires_at).toLocaleTimeString()}. New budget or spending data invalidates this proposal.</p>{!decision&&<div className="flex gap-3">{[true,false].map(approve=><button key={String(approve)} disabled={deciding||busy} className="border border-zinc-600 rounded-lg px-4 py-2" onClick={async()=>{if(decisionLock.current)return;decisionLock.current=true;setDeciding(true);try{const {data,error}=await supabase.rpc('decide_coach_proposal',{proposal_id:latest.proposal!.id,approve});if(error||data?.status!==(approve?'approved':'rejected')){setError('Change was not confirmed. Refresh and request a new proposal; it may be stale.');setDecision('Not applied or unconfirmed. Refresh canonical data before retrying.');return;}setDecision(approve?'Approved and applied.':'Rejected. Nothing changed.');if(approve)await onApplied();}catch{setError('Could not confirm the change. Refresh your data before retrying.');}finally{decisionLock.current=false;setDeciding(false);}}}>{deciding?'Please wait…':approve?'Approve changes':'Reject'}</button>)}</div>}{decision&&<p role="status">{decision}</p>}</section>}
     <div ref={end}/>
     {error && <p role="alert" className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-red-200 text-sm">{error} Your question is below so you can retry.</p>}
-    <form onSubmit={event => {event.preventDefault();void send();}} className="rounded-2xl border border-zinc-700 bg-zinc-900 p-4">
+    <form
+  onSubmit={event => {
+    event.preventDefault();
+    void send();
+  }}
+  className="sticky bottom-0 z-20 rounded-2xl border border-zinc-700 bg-zinc-900 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
+>
       <label htmlFor="coach-question" className="text-sm font-medium">Ask about your budget</label><textarea ref={input} id="coach-question" value={draft} onChange={event=>setDraft(event.target.value)} disabled={busy} maxLength={2000} rows={3} placeholder="Can I afford this without missing my savings target?" className="w-full resize-y bg-transparent py-3 text-sm outline-none focus:ring-2 focus:ring-green-600 rounded-lg disabled:opacity-50"/>
       <div className="flex items-center justify-between gap-3"><span className="text-xs text-zinc-500">{draft.length}/2,000</span><button disabled={busy || deciding || !draft.trim()} className="rounded-xl bg-green-500 px-5 py-2 font-semibold text-zinc-950 hover:bg-green-400 disabled:opacity-40">{busy?'Thinking…':'Send'}</button></div>
     </form>
