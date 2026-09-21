@@ -78,4 +78,3 @@ See [Cloudflare static response headers](https://developers.cloudflare.com/pages
 The bank-security migration and all four matching Plaid functions were applied/deployed on 2026-09-21 after explicit approval. Preserve authenticated-user validation and review the existing legacy-JWT setting/config-file drift before future CLI deployment. See REAL_BANK_READINESS_HANDOFF.md for residual revocation and device-acceptance requirements.
 
 There is no need to publish the app publicly or do App Store marketing. Once sandbox native acceptance and the bank-security blockers are resolved, follow IOS_TESTFLIGHT_HANDOFF.md for the existing private TestFlight workflow: pull branch, npm ci, sync/open iOS, verify signing/capabilities, run on device, archive, validate and upload in Xcode Organizer, then assign private testers in App Store Connect.
-
