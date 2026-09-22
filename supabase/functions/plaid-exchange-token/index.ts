@@ -1,178 +1,26 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
-
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+import {createClient} from 'https://esm.sh/@supabase/supabase-js@2.116.0';
+import {plaidConfig,PlaidFailure,cors,reply,failure} from '../_shared/plaid.ts';
+Deno.serve(async req=>{
+ if(req.method==='OPTIONS')return new Response('ok',{headers:cors});
+ if(req.method!=='POST')return reply({error:'Method not allowed'},405);
+ const auth=req.headers.get('authorization');if(!auth?.startsWith('Bearer '))return reply({code:'SIGN_IN_REQUIRED'},401);
+ try{
+  const url=Deno.env.get('SUPABASE_URL')!,anon=Deno.env.get('SUPABASE_ANON_KEY')!;
+  const client=createClient(url,anon,{global:{headers:{Authorization:auth}},auth:{persistSession:false}});
+  const {data:{user},error}=await client.auth.getUser();if(error||!user)return reply({code:'SIGN_IN_REQUIRED'},401);
+  let body;try{body=await req.json();}catch{throw new PlaidFailure('INVALID_REQUEST',400);}
+  const config=plaidConfig(Deno.env.get);
+  if(!body||typeof body.public_token!=='string'||body.public_token.length>1024||!body.public_token.startsWith('public-'+config.environment+'-'))throw new PlaidFailure('INVALID_REQUEST',400);
+  const response=await fetch(config.baseUrl+'/item/public_token/exchange',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:config.client_id,secret:config.secret,public_token:body.public_token}),signal:AbortSignal.timeout(20000)});
+  if(!response.ok)throw new PlaidFailure('PLAID_EXCHANGE_UNAVAILABLE',502);
+  const data=await response.json();if(typeof data.access_token!=='string'||typeof data.item_id!=='string')throw new PlaidFailure('PLAID_EXCHANGE_UNAVAILABLE',502);
+  const admin=createClient(url,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false}});
+  const stored=await admin.rpc('register_plaid_connection',{p_user_id:user.id,p_item_id:data.item_id,p_access_token:data.access_token,p_environment:config.environment});
+  if(stored.error){
+   // The database transaction rolls back completely; revoke the new remote Item too.
+   try{const revoked=await fetch(config.baseUrl+'/item/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:config.client_id,secret:config.secret,access_token:data.access_token}),signal:AbortSignal.timeout(20000)});if(!revoked.ok)console.error('plaid_exchange_cleanup_failed');}catch{console.error('plaid_exchange_cleanup_failed');}
+   throw new PlaidFailure('BANK_STORAGE_UNAVAILABLE');
   }
-
-  try {
-    const authHeader = req.headers.get("Authorization");
-
-    if (!authHeader) {
-      throw new Error("Missing Authorization header");
-    }
-
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-    // Identify the signed-in Budget Live user
-    const userClient = createClient(supabaseUrl, anonKey, {
-      global: {
-        headers: {
-          Authorization: authHeader,
-        },
-      },
-    });
-
-    const {
-      data: { user },
-      error: userError,
-    } = await userClient.auth.getUser();
-
-    if (userError || !user) {
-      throw new Error("Unable to identify signed-in user");
-    }
-
-    const { public_token } = await req.json();
-
-    if (!public_token) {
-      throw new Error("Missing public_token");
-    }
-
-    const clientId = Deno.env.get("PLAID_CLIENT_ID");
-    const secret =
-      Deno.env.get("PLAID_SANDBOX_SECRET") ||
-      Deno.env.get("PLAID_SECRET");
-
-    if (!clientId || !secret) {
-      throw new Error("Missing Plaid credentials");
-    }
-
-    // Exchange temporary public token with Plaid
-    const response = await fetch(
-      "https://sandbox.plaid.com/item/public_token/exchange",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          client_id: clientId,
-          secret,
-          public_token,
-        }),
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("Plaid exchange failed");
-
-      return new Response(
-        JSON.stringify({ error: "Plaid token exchange failed" }),
-        {
-          status: response.status,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    }
-
-    const admin = createClient(supabaseUrl, serviceRoleKey);
-
-    const vaultName = `plaid_${data.item_id}`;
-
-    // Store the Plaid access token directly in encrypted Vault
-    const { error: vaultError } = await admin.rpc(
-      "store_plaid_token_in_vault",
-      {
-        token_value: data.access_token,
-        token_name: vaultName,
-      }
-    );
-
-    if (vaultError) {
-      console.error("Vault storage error:", vaultError);
-      throw new Error("Unable to securely save Plaid connection");
-    }
-
-    // Keep only non-sensitive identifying information in this table
-    const { error: tokenRecordError } = await admin
-      .from("plaid_private_tokens")
-      .upsert(
-        {
-          user_id: user.id,
-          plaid_item_id: data.item_id,
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "plaid_item_id",
-        }
-      );
-
-    if (tokenRecordError) {
-      console.error("Token record error:", tokenRecordError);
-      throw new Error("Unable to save Plaid token record");
-    }
-
-    // Store non-sensitive connection information
-    const { error: connectionError } = await admin
-      .from("bank_connections")
-      .upsert(
-        {
-          user_id: user.id,
-          plaid_item_id: data.item_id,
-          status: "active",
-          last_synced_at: null,
-        },
-        {
-          onConflict: "plaid_item_id",
-        }
-      );
-
-    if (connectionError) {
-      console.error("Connection storage error:", connectionError);
-      throw new Error("Unable to save bank connection");
-    }
-
-    // Never send the Plaid access token to the browser
-    return new Response(
-      JSON.stringify({
-        success: true,
-        item_id: data.item_id,
-      }),
-      {
-        status: 200,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (error) {
-    console.error(error);
-
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 400,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  }
+  return reply({success:true});
+ }catch(error){return failure(error);}
 });

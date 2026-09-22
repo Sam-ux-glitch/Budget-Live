@@ -1,2 +1,17 @@
 [functions.plaid-sync-transactions]
 verify_jwt = true
+
+[functions.ai-budget-chat]
+verify_jwt = true
+
+[functions.plaid-disconnect]
+verify_jwt = true
+
+[functions.plaid-create-link-token]
+verify_jwt = true
+
+[functions.plaid-exchange-token]
+verify_jwt = true
+
+[functions.ai-categorize-transactions]
+verify_jwt = true

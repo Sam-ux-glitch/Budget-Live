@@ -1,0 +1,5 @@
+const messages:Record<string,string>={NATIVE_LINK_NOT_CONFIGURED:'iPhone bank linking is not configured yet. The app owner must configure the Plaid HTTPS Universal Link before connecting.',PLAID_CONFIGURATION_ERROR:'Bank linking is unavailable because the server configuration needs attention.',BANK_CONFIGURATION_ERROR:'Bank linking is unavailable because the server configuration needs attention.',SIGN_IN_REQUIRED:'Please sign in again before connecting your bank.',PLAID_LINK_UNAVAILABLE:'Plaid could not start bank linking. Please try again shortly.',INVALID_REQUEST:'Bank linking could not start. Refresh the app and retry.'};
+export async function bankErrorMessage(error:unknown){
+ try{const context=(error as {context?:Response})?.context;if(context&&typeof context.clone==='function'){const body=await context.clone().json();if(typeof body.code==='string'&&messages[body.code])return messages[body.code];}}catch{/* Never display an arbitrary backend/provider error body. */}
+ return 'Bank linking could not start. Please try again shortly or sign in again.';
+}

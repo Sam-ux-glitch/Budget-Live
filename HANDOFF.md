@@ -1,3 +1,22 @@
+> Current milestone: see [IOS_TESTFLIGHT_HANDOFF.md](IOS_TESTFLIGHT_HANDOFF.md) for iOS, Home/Lock widgets, approved AI actions, collapsed Settings, deployment and Mac steps. The content below records the earlier milestone.
+
+# Latest handoff: AI Budget Coach — 2026-09-20
+
+The integrated AI Coach is implemented and deployed using the existing Supabase OpenAI secret. See [AI_COACH_HANDOFF.md](AI_COACH_HANDOFF.md) for architecture, security, tests, deployment, commit identifiers, limits and next steps. Savings V2 and the existing categorization/Plaid flows are preserved. No new migration or key setup is pending.
+
+---
+
+# Latest handoff: Savings V2 - 2026-09-20
+
+- Work is on codex/savings-v2; checkpoint f797279 preserves the clean abbe5c4 starting state.
+- See SAVINGS_V2.md for behavior, sources, migration instructions, test scope and the next AI Budget Coach milestone.
+- Savings separates automatic/monthly targets and shows income, monthly budget, surplus and savings support/shortfall. Monthly overrides retain the existing save flow and can be reset. No fixed savings amount fallback remains.
+- Unit tests (19), lint, production build and both browser suites (13 scenario groups) passed. Browser tests use intercepted synthetic Supabase data; no real bank calls or savings records were changed.
+- Apply supabase/migrations/202609190002_savings_reset.sql to the existing Savings V1 database before relying on reset, unless equivalent owner-scoped DELETE permission already exists. This migration was supplied, not applied to production. Live authenticated persistence/RLS still requires a smoke test.
+- Next: read-only AI Coach recommendations grounded in the shared monthly SavingsPlan, with explicit approval before later reallocation writes.
+
+---
+
 # Budget Live handoff — 2026-09-19
 
 ## Completed
